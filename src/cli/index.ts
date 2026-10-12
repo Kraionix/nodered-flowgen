@@ -17,6 +17,8 @@
  * worthless.
  */
 
+import { readFile } from 'node:fs/promises';
+
 import { parseArgv, flag, GLOBAL_OPTIONS, renderUsage, rejectPositionals, type OptionSpec, type ParsedArgs } from './args.ts';
 import { createContext, type CliContext, type CliIo } from './context.ts';
 import { CliFailure, EXIT, UsageError, EXIT_DESCRIPTIONS, type ExitCode } from './exit.ts';
@@ -104,25 +106,47 @@ export interface RunOptions extends CliIo {
   readonly argv: readonly string[];
 }
 
+/**
+ * A resolved invocation: what will run, and the options it was parsed with.
+ *
+ * Resolution is a separate step from execution on purpose. `--json` decides how *every* outcome is
+ * rendered, including a command that throws, so the parsed options have to be in hand before the
+ * command runs — and when resolution itself fails (an unknown command, a bad option) there are no
+ * parsed options at all, which is the only case where the rendering falls back to scanning argv.
+ */
+interface Command {
+  readonly name: string;
+  /** Absent for `--help` and `--version`, which never reach a command's own options. */
+  readonly args?: ParsedArgs;
+  /** Set when the invocation is answered without running a command. */
+  readonly immediate?: CommandResult;
+  readonly run?: () => Promise<CommandResult>;
+}
+
 /** Runs one CLI invocation and returns its exit code. Never throws. */
 export async function runCli(options: RunOptions): Promise<ExitCode> {
   const context = createContext(options);
   const { argv } = options;
 
+  let command: Command | undefined;
   let result: CommandResult;
   try {
-    result = await dispatch(context, argv);
+    command = resolve(context, argv);
+    result = command.immediate ?? (await (command.run as () => Promise<CommandResult>)());
   } catch (cause) {
     const failure = classify(cause);
+    // A scan of the raw argv, only when nothing was parsed: `--no-json` and the `--` terminator
+    // both fooled a plain `argv.includes`, and both are handled here.
+    const json = command?.args === undefined ? scanFlag(argv, 'json') : flag(command.args, 'json');
     const payload: CommandResult = {
-      command: commandName(argv),
+      command: command?.name ?? commandName(argv),
       exitCode: failure.exitCode,
       diagnostics: [],
       messages: [failure.message, ...(failure.hint === undefined ? [] : [`hint: ${failure.hint}`])],
     };
     // A failure in `--json` mode still prints JSON, and on stdout: the entire point of the flag
     // is that a pipeline can parse the outcome without caring whether the exit code was zero.
-    if (flagOf(argv, '--json')) {
+    if (json) {
       context.stdout(renderJson(payload));
     } else {
       context.stderr(renderHuman(payload, { quiet: false }));
@@ -133,18 +157,22 @@ export async function runCli(options: RunOptions): Promise<ExitCode> {
     return failure.exitCode;
   }
 
-  const render = flagOf(argv, '--json') ? renderJson(result) : renderHuman(result, { quiet: flagOf(argv, '--quiet') });
+  const json = command.args === undefined ? scanFlag(argv, 'json') : flag(command.args, 'json');
+  const quiet = command.args === undefined ? scanFlag(argv, 'quiet') : flag(command.args, 'quiet');
+  const render = json ? renderJson(result) : renderHuman(result, { quiet });
   if (render !== '') context.stdout(render);
   return result.exitCode;
 }
 
-async function dispatch(context: CliContext, argv: readonly string[]): Promise<CommandResult> {
+function resolve(context: CliContext, argv: readonly string[]): Command {
   const head = argv[0];
+
+  if (head === '--version') return { name: 'version', run: () => reportVersion(context) };
 
   if (head === undefined || head === '--help' || head === '-h' || head === 'help') {
     if (head === undefined) throw new UsageError('no command given', `run \`${PROGRAM} --help\` to see the commands`);
     context.stdout(`${renderHelp()}\n`);
-    return { command: 'help', exitCode: EXIT.ok, diagnostics: [], messages: [] };
+    return { name: 'help', immediate: { command: 'help', exitCode: EXIT.ok, diagnostics: [], messages: [] } };
   }
 
   const spec = matchCommand(argv);
@@ -152,17 +180,41 @@ async function dispatch(context: CliContext, argv: readonly string[]): Promise<C
 
   const consumed = spec.path.length;
   const args = parseArgv(argv.slice(consumed), [...spec.options, ...GLOBAL_OPTIONS]);
+  const name = spec.path.join(' ');
+
+  if (flag(args, 'version')) return { name, args, run: () => reportVersion(context) };
 
   if (flag(args, 'help')) {
     context.stdout(`${renderUsage(PROGRAM, spec.summary, [...spec.options, ...GLOBAL_OPTIONS], [...spec.usage])}\n`);
-    return { command: spec.path.join(' '), exitCode: EXIT.ok, diagnostics: [], messages: [] };
+    return { name, args, immediate: { command: name, exitCode: EXIT.ok, diagnostics: [], messages: [] } };
   }
 
   // `init` takes no positional arguments; every other command takes none either, and silently
   // ignoring one is how a typo becomes a wrong deploy.
-  rejectPositionals(args, `${PROGRAM} ${spec.usage[0] ?? spec.path.join(' ')}`);
+  rejectPositionals(args, `${PROGRAM} ${spec.usage[0] ?? name}`);
 
-  return spec.run(context, args);
+  return { name, args, run: () => spec.run(context, args) };
+}
+
+/**
+ * The version, read from the manifest that sits next to the module. `src/cli/` and `dist/cli/`
+ * are both two levels below the package root, so one relative URL serves both — and the smoke test
+ * asserts it against the *installed* tarball, where the layout is `dist/cli/bin.js`.
+ */
+async function packageVersion(): Promise<string> {
+  try {
+    const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8')) as {
+      version?: unknown;
+    };
+    return typeof manifest.version === 'string' ? manifest.version : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+async function reportVersion(context: CliContext): Promise<CommandResult> {
+  context.stdout(`${await packageVersion()}\n`);
+  return { command: 'version', exitCode: EXIT.ok, diagnostics: [], messages: [] };
 }
 
 function matchCommand(argv: readonly string[]): CommandSpec | undefined {
@@ -239,8 +291,15 @@ function commandName(argv: readonly string[]): string {
 }
 
 /** A last-resort peek at the raw argv: the failure paths run before options are parsed. */
-function flagOf(argv: readonly string[], name: string): boolean {
-  return argv.includes(name);
+function scanFlag(argv: readonly string[], name: string): boolean {
+  const positive = `--${name}`;
+  const negative = `--no-${name}`;
+  for (const token of argv) {
+    if (token === '--') break;
+    if (token === negative) return false;
+    if (token === positive) return true;
+  }
+  return false;
 }
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {

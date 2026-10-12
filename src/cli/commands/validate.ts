@@ -7,6 +7,7 @@
  * "silently checked less".
  */
 
+import { eachNode } from '../../model/entities.ts';
 import { describePalette } from '../../palette/snapshot.ts';
 import type { Problem } from '../../validate/problem.ts';
 
@@ -62,7 +63,9 @@ export async function validateCommand(context: CliContext, args: ParsedArgs): Pr
     mode: 'collect',
   });
 
-  const nodes = prepared.built.flowSet.flows.reduce((total, flow) => total + flow.nodes.length, 0);
+  // Every node, not just the tabs': a number that ignores subflow bodies and containerless nodes
+  // reads as "we validated less than you think", and it moves when nothing visible changed.
+  const nodes = eachNode(prepared.built.flowSet).length;
   const problems: readonly Problem[] = prepared.report.problems;
   const errors = problems.filter((problem) => problem.severity === 'error').length;
   const summary = describePalette(prepared.palette.snapshot);

@@ -38,6 +38,26 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
 
 ### Fixed
 
+* **`flowgen --version` works.** It exited `2`, "unknown command": there was no version option at
+  all. The version is now read from the manifest next to the module (`src/cli/` and `dist/cli/` are
+  both two levels below the package root), and `--version` is a global option, so
+  `flowgen validate --version` prints the version without running the validator. The packaging test
+  asserts it against the *installed* tarball, which is where the relative path has to hold.
+* **How output is rendered is decided by the parsed options, not by scanning `argv`.** A raw
+  `argv.includes('--json')` cannot tell a flag from a value: `flowgen validate --config --json`
+  printed its failure as JSON on stdout, and `flowgen validate -- --json` did too, because the token
+  after the terminator is a positional. Parsing now happens in one place, before the command runs,
+  so a command that throws is still rendered the way it was asked for; the argv scan survives only
+  for invocations that never parsed (an unknown command), where it also honours `--no-<flag>` and
+  stops at `--`.
+* **`validate` counts every node.** The summary counted `flows[].nodes` only, so subflow bodies and
+  containerless nodes were invisible in a line whose whole job is to say how much was checked.
+* **A subflow instance is built with one wire array per declared output.** `#createInstance` wrote
+  `wires: []`, and normalisation cannot repair it: a subflow defined inline is not in `GET /nodes`,
+  and `defineFlowSet` normalises against the base palette before the subflow overlay exists. An
+  instance with nothing wired to it was therefore emitted as `"wires": []` and then failed
+  `flowgen validate` with `graph/wire-arity` — the build producing a flow set that its own
+  validation rejects.
 * **The CLI no longer exits 0 in silence when it is run through a symlink.** The entry point lived
   at the bottom of `src/cli/index.ts` behind `import.meta.url === pathToFileURL(process.argv[1]).href`.
   `argv[1]` keeps the path the interpreter was given while `import.meta.url` is the resolved real

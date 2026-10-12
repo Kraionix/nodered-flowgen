@@ -229,6 +229,92 @@ ${options.url === undefined ? '' : `  targets: { local: { url: ${JSON.stringify(
 `;
 }
 
+test('flowgen --version prints the manifest version, with or without a command', async () => {
+  const dir = await tempDir();
+  try {
+    const manifest = JSON.parse(await readFile(path.join(REPO_ROOT, 'package.json'), 'utf8')) as { version: string };
+
+    const bare = await run(dir, ['--version']);
+    assert.equal(bare.code, EXIT.ok, bare.stderr);
+    assert.equal(bare.stdout.trim(), manifest.version);
+
+    // `--version` is a global option: asking any command for the version must not run it.
+    const afterCommand = await run(dir, ['validate', '--version']);
+    assert.equal(afterCommand.code, EXIT.ok, afterCommand.stderr);
+    assert.equal(afterCommand.stdout.trim(), manifest.version);
+    assert.doesNotMatch(afterCommand.stdout, /checked/, 'the command must not have run');
+
+    assert.match((await run(dir, ['--help'])).stdout, /--version\s+print the version/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('the rendering is decided by the parsed options, not by scanning argv for --json', async () => {
+  const dir = await tempDir();
+  try {
+    // `--json` here is the *value* of `--config`, not a flag. A raw `argv.includes('--json')`
+    // cannot tell the difference and would render this failure as JSON on stdout.
+    const asValue = await run(dir, ['validate', '--config', '--json']);
+    assert.equal(asValue.code, EXIT.usage);
+    assert.equal(asValue.stdout, '', 'the failure is text, because no --json flag was given');
+    assert.match(asValue.stderr, /--json|flowgen\.config\.ts/);
+
+    // Everything after `--` is a positional, so this is a stray argument — and the error about it
+    // is not JSON either.
+    const terminated = await run(dir, ['validate', '--', '--json']);
+    assert.equal(terminated.code, EXIT.usage);
+    assert.equal(terminated.stdout, '');
+    assert.match(terminated.stderr, /unexpected argument/);
+
+    // The flag itself still works, and still prints on stdout.
+    const real = await run(dir, ['validate', '--json']);
+    assert.equal(real.code, EXIT.usage);
+    assert.equal(real.stderr, '');
+    assert.equal((JSON.parse(real.stdout) as { exitCode: number }).exitCode, EXIT.usage);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('flowgen validate counts every node, including subflow bodies', async () => {
+  const dir = await tempDir();
+  try {
+    await writeFile(
+      path.join(dir, 'flowgen.config.ts'),
+      `import { defineConfig, defineFlowSet } from ${JSON.stringify(PACKAGE_ENTRY)};
+
+export default defineConfig({
+  flowSet: defineFlowSet((f) => {
+    const pass = f.subflow('pass', { name: 'pass', ports: { in: ['value'], out: ['value'] } }, (s) => {
+      const work = s.node('inject', { key: 'work', name: 'work' });
+      s.in(work);
+      s.out(work, 0);
+    });
+    const tab = f.flow('main', { label: 'Main' });
+    tab.instance(pass, { key: 'pass_1' });
+    tab.node('inject', { key: 'tick', name: 'tick' });
+  }),
+  palette: { default: 'local', profiles: { local: { snapshot: 'palette.json', typesDirectory: 'types.d', cheatSheet: 'palette.md' } } },
+});
+`,
+      'utf8',
+    );
+    await writeFile(path.join(dir, 'palette.json'), paletteFixture(), 'utf8');
+
+    const result = await run(dir, ['validate']);
+    assert.equal(result.code, EXIT.ok, result.stdout + result.stderr);
+    // Two nodes in the tab (the instance and the inject) and one inside the subflow definition:
+    // the count used to say 2, because it only looked at `flows[].nodes`.
+    assert.match(result.stdout, /1 tab\(s\)\/1 subflow\(s\), 3 node\(s\)/);
+
+    const json = JSON.parse((await run(dir, ['validate', '--json'])).stdout) as { flowSet: { nodes: number } };
+    assert.equal(json.flowSet.nodes, 3);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('the bin runs when it is reached through a symlinked directory', async () => {
   // `node_modules/.bin/flowgen` is a symlink, so this is the *normal* way an installed CLI is
   // started — and the old entry guard compared `argv[1]` (the link) with `import.meta.url` (the
@@ -449,5 +535,5 @@ export default defineConfig({
 
 test('global options are accepted by every command', () => {
   const names = GLOBAL_OPTIONS.map((option) => option.name);
-  assert.deepEqual(names, ['cwd', 'config', 'json', 'quiet', 'help']);
+  assert.deepEqual(names, ['cwd', 'config', 'json', 'quiet', 'help', 'version']);
 });

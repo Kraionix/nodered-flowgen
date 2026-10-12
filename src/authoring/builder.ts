@@ -485,7 +485,12 @@ export class Builder implements FlowBuilder {
       ...(g === undefined ? {} : { g }),
       props: { known, extras },
       ...(env === undefined ? {} : { env }),
-      wires: [],
+      // One array per declared output port, empty where nothing is wired yet — the editor always
+      // writes exactly one, and `[]` is not the same document. Normalisation cannot do this for an
+      // instance: a subflow defined inline is never in `GET /nodes`, and `defineFlowSet` normalises
+      // against the base palette *before* the subflow overlay exists, so an instance with no
+      // outgoing wire used to be emitted as `"wires": []` and then failed its own arity check.
+      wires: Array.from({ length: entry.definition.ports.out.length }, () => [] as string[]),
     };
     this.#nodes.push(node);
     return this.#handleFor(node);

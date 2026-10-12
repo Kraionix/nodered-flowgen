@@ -37,6 +37,7 @@ export const GLOBAL_OPTIONS: readonly OptionSpec[] = [
   { name: 'json', kind: 'boolean', description: 'machine-readable output on stdout' },
   { name: 'quiet', kind: 'boolean', description: 'hide info-level diagnostics' },
   { name: 'help', kind: 'boolean', alias: 'h', description: 'show this help' },
+  { name: 'version', kind: 'boolean', description: 'print the version and exit' },
 ];
 
 export function parseArgv(argv: readonly string[], spec: readonly OptionSpec[]): ParsedArgs {

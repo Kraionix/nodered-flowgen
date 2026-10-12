@@ -355,6 +355,23 @@ test('untypedConfig() creates a config node for a type the palette does not cove
   assert.equal(eachNode(flowSet).find((node) => node.type === 'ui_gauge')?.geometry?.x, 120, 'an ordinary node still gets geometry');
 });
 
+test('an unwired subflow instance still has one wire array per declared output', () => {
+  const definition = defineFlowSet((f) => {
+    const pass = f.subflow('pass', { name: 'pass', ports: { in: ['value'], out: ['value', 'error'] } }, (s) => {
+      const work = s.node('inject', { key: 'work' });
+      s.in(work);
+      s.out(work, 0);
+    });
+    f.flow('main').instance(pass, { key: 'pass_1' });
+  });
+
+  // The palette cannot answer for an inline subflow: it is not in `GET /nodes`, and the flow set is
+  // normalised before the subflow overlay exists. The definition's own ports are the authority, and
+  // the editor writes one array per output whether or not anything is wired to it.
+  const instance = definition.build({ palette: PALETTE }).flowSet.flows[0]?.nodes[0];
+  assert.deepEqual(instance?.wires, [[], []], 'two declared outputs, two wire arrays');
+});
+
 test('ids are deterministic, unique and honour the lockfile', () => {
   const definition = defineFlowSet((f) => {
     const tab = f.flow('main');

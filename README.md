@@ -95,7 +95,8 @@ built-in ones) and `layout`. Validators are ordinary functions: `{ name, require
 
 Useful flags: `--target <name>`, `--url`, `--token`, `--token-env <VAR>`, `--profile`, `--palette
 <file>`, `--prune` / `--no-prune`, `--dry-run`, `--expect-rev <rev>`, `--diff-geometry`,
-`--no-palette-check`, `--json`, `--quiet`, `--cwd`, `--config`.
+`--no-palette-check`, `--json`, `--quiet`, `--cwd`, `--config`. `flowgen --version` prints the
+package version; `--version` after a command does the same without running the command.
 
 ### Exit codes
 
@@ -110,8 +111,8 @@ Useful flags: `--target <name>`, `--url`, `--token`, `--token-env <VAR>`, `--pro
 
 `--json` prints `{command, exitCode, outcome, diagnostics[], …}` on **stdout even when the command
 fails**, so a pipeline can parse the outcome without caring about the exit code. `Problem.code` is
-stable and namespaced (`palette/*`, `graph/*`, `overlay/*`, `normalize/*`, `plan/*`, `deploy/*`) —
-allowlist by code, never by message.
+stable and namespaced (`palette/*`, `graph/*`, `layout/*`, `normalize/*`, `overlay/*`, `plan/*`,
+`deploy/*`) — allowlist by code, never by message.
 
 ## Ownership, pruning and safety
 
