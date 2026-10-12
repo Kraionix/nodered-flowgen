@@ -20,7 +20,7 @@
 
 import type { PaletteType } from '../palette/model.ts';
 
-import type { Problem } from '../validate/problem.ts';
+import type { Problem } from '../diagnostics/index.ts';
 
 import type { ConfigNode, EnvParam, FlowSet, Group, Node, NodeProps } from './entities.ts';
 

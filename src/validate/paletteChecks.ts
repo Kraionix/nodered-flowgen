@@ -11,7 +11,7 @@ import { effectiveInputCount, effectiveOutputCount } from '../model/normalize.ts
 import { eachConfig, eachNode, type FlowSet, type NodeProps } from '../model/entities.ts';
 import { isSubflowType, subflowDefinitionId, type PaletteType, type RefSpec } from '../palette/model.ts';
 
-import type { Problem } from './problem.ts';
+import type { Problem } from '../diagnostics/index.ts';
 import type { ValidationContext, Validator } from './report.ts';
 
 /** Node types that are structural rather than palette-declared. */

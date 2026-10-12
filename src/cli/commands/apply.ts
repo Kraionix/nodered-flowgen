@@ -16,7 +16,7 @@ import path from 'node:path';
 
 import { applyDeployment } from '../../io/apply.ts';
 import { updateLockfile } from '../../io/lockfile.ts';
-import type { Problem } from '../../validate/problem.ts';
+import type { Problem } from '../../diagnostics/index.ts';
 
 import { flag, text, type OptionSpec } from '../args.ts';
 import { appliedSummary, checkPaletteDrift, describePlan, TARGET_OPTIONS } from '../deploy.ts';

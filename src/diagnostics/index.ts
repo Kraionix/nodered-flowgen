@@ -1,5 +1,12 @@
 /**
- * The diagnostics contract.
+ * The diagnostics contract — the vocabulary every layer reports in.
+ *
+ * This sits at the bottom of the stack, next to `result` and `typing`, for a structural reason
+ * rather than a tidy one. It used to live in `validate/`, and `model/normalize.ts` imported it from
+ * there while everything in `validate/` imported `model/entities.ts`: a directory cycle that made
+ * the layering story in the README false, because a reader could not tell whether the IR depended
+ * on validation or the other way round. A problem has no dependencies of its own, so it belongs
+ * underneath both — and `test/unit/layers.test.ts` is what keeps it there.
  *
  * Codes are namespaced and stable, because CI is expected to allowlist them and a rename would
  * silently turn an error into a warning. Every problem carries the entity it belongs to, a

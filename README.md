@@ -170,17 +170,24 @@ palettes/local.md                      # human/agent-readable cheat sheet
 ## Layout
 
 ```
-src/model      IR, ids, normalisation (the editor's own fix-ups, applied to data)
+src/result     the Ok/Err result type;  src/typing  the surface generated types attach to
+src/diagnostics the Problem contract every layer reports in
 src/palette    palette model, snapshot, extractors, sources, codegen
+src/model      IR, ids, normalisation (the editor's own fix-ups, applied to data)
 src/emit       the canonical emitter;  src/import  the inverse
-src/validate   palette / graph / project rules and the report
+src/validate   palette / graph / project rules, and the report
 src/authoring  builder, defineFlowSet, layout, dashboard helper
 src/io         admin API client, lockfile, plan/merge, apply, receipts
+src/config     flowgen.config.ts: profiles, targets, layout
+src/toolkit    the composition helper (reversible registration, gated activation)
 src/cli        the flowgen binary
 ```
 
-Dependencies point inward only: `model` and `palette` depend on nothing, `emit`/`validate` derive
-from them, and `io`/`import`/`authoring`/`cli` sit on top.
+Dependencies point inward only, in that order: `result`, `typing`, `diagnostics` and `toolkit`
+depend on nothing, `palette` only on `result`, `model` on `palette` and `diagnostics`,
+`emit`/`import`/`validate` on those, `authoring`/`io` above them, then `config`, then `cli`.
+`test/unit/layers.test.ts` reads every relative import under `src/` and fails when one points
+outward, because an import is the only thing that can create a cycle.
 
 ## Tests
 

@@ -5,7 +5,7 @@ import type { FlowSet, Node, NodeProps } from '../../src/model/entities.ts';
 import { normalizeFlowSet, normalizeFlowSetWithFixes } from '../../src/model/normalize.ts';
 import { paletteProperty, paletteType, type PaletteType } from '../../src/palette/model.ts';
 import { defaultValidators, overlayRulesValidator } from '../../src/validate/index.ts';
-import { countBySeverity, hasErrors } from '../../src/validate/problem.ts';
+import { countBySeverity, hasErrors } from '../../src/diagnostics/index.ts';
 import { formatProblems, formatSkipped, runValidators, type Validator } from '../../src/validate/report.ts';
 
 const PALETTE: Record<string, PaletteType> = {

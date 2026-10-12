@@ -17,7 +17,7 @@ import { parseFlowFile } from '../import/fromFlowJson.ts';
 import type { FlowSet } from '../model/entities.ts';
 import type { PaletteSnapshot } from '../palette/snapshot.ts';
 import { samePaletteContent } from '../palette/snapshot.ts';
-import type { Problem } from '../validate/problem.ts';
+import type { Problem } from '../diagnostics/index.ts';
 
 import { CliFailure, EXIT } from './exit.ts';
 import { loadLivePalette } from './palette.ts';

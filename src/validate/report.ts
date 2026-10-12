@@ -14,7 +14,7 @@
  *    state, so two targets with different palettes validate independently in one process.
  */
 
-import { hasErrors, type Problem } from './problem.ts';
+import { hasErrors, type Problem } from '../diagnostics/index.ts';
 import type { FlowSet } from '../model/entities.ts';
 import type { PaletteType } from '../palette/model.ts';
 

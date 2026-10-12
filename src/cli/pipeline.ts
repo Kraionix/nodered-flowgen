@@ -18,7 +18,7 @@ import { lockfileIdMap, ownedContainers, knownIds } from '../io/lockfile.ts';
 import { AdminApiClient } from '../io/adminApi.ts';
 import { defaultValidators } from '../validate/index.ts';
 import { runValidators, type Capability, type ValidationReport } from '../validate/report.ts';
-import type { Problem } from '../validate/problem.ts';
+import type { Problem } from '../diagnostics/index.ts';
 
 import { envToken, type CliContext } from './context.ts';
 import { UsageError } from './exit.ts';

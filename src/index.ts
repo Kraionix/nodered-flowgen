@@ -56,7 +56,7 @@ export {
   type Problem,
   type ProblemCode,
   type Severity,
-} from './validate/problem.ts';
+} from './diagnostics/index.ts';
 export {
   formatProblems,
   formatSkipped,

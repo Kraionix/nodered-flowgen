@@ -23,7 +23,7 @@
  */
 
 import type { FlowSet, Group, Node } from '../model/entities.ts';
-import type { Problem } from '../validate/problem.ts';
+import type { Problem } from '../diagnostics/index.ts';
 
 export interface LayoutOptions {
   readonly originX?: number;

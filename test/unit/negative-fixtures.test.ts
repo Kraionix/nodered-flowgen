@@ -33,7 +33,7 @@ import { filesystemSource } from '../../src/palette/sources/filesystem.ts';
 import type { PaletteSnapshot } from '../../src/palette/snapshot.ts';
 import { applyOverlays } from '../../src/palette/sources/source.ts';
 import { subflowOverlay } from '../../src/palette/sources/subflow.ts';
-import type { Problem } from '../../src/validate/problem.ts';
+import type { Problem } from '../../src/diagnostics/index.ts';
 import { defaultValidators } from '../../src/validate/index.ts';
 import { runValidators } from '../../src/validate/report.ts';
 

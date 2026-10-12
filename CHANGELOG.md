@@ -36,6 +36,16 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
   fixed point), a runtime probe through a real Node-RED, pinned palette fixtures for 5.0.7 and
   5.0.8, and the seven prior-art defects as negative fixtures.
 
+### Changed
+
+* **The diagnostics contract moved to `src/diagnostics/`.** It used to live in `validate/`, and
+  `model/normalize.ts` imported `Problem` from there while every file in `validate/` imported
+  `model/entities.ts` — a directory cycle that made the README's "dependencies point inward only"
+  false. `Problem`, `Severity`, `ProblemCode`, `problem()`, `hasErrors()`, `countBySeverity()` and
+  `exitCodeFor()` are unchanged and still exported from the package root; only the import path
+  inside the repository moved. `test/unit/layers.test.ts` now reads every relative import under
+  `src/` and fails when one points at a higher layer, so the story cannot drift again.
+
 ### Fixed
 
 * **`flowgen --version` works.** It exited `2`, "unknown command": there was no version option at

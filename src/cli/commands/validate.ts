@@ -9,7 +9,7 @@
 
 import { eachNode } from '../../model/entities.ts';
 import { describePalette } from '../../palette/snapshot.ts';
-import type { Problem } from '../../validate/problem.ts';
+import type { Problem } from '../../diagnostics/index.ts';
 
 import { flag, text, type OptionSpec } from '../args.ts';
 import { EXIT, UsageError } from '../exit.ts';

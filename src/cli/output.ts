@@ -8,7 +8,7 @@
  */
 
 import { formatProblems, formatSkipped, type SkippedValidator } from '../validate/report.ts';
-import { countBySeverity, type Problem } from '../validate/problem.ts';
+import { countBySeverity, type Problem } from '../diagnostics/index.ts';
 
 import { EXIT_DESCRIPTIONS, type ExitCode } from './exit.ts';
 

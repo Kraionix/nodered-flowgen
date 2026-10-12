@@ -18,7 +18,7 @@
 import { emitEntries } from '../emit/flowJson.ts';
 import type { FlowSet } from '../model/entities.ts';
 import type { PaletteType } from '../palette/model.ts';
-import type { Problem } from '../validate/problem.ts';
+import type { Problem } from '../diagnostics/index.ts';
 
 export type PlanOperationKind =
   | 'create-container'

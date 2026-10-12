@@ -13,7 +13,7 @@
 import type { FlowSet } from '../model/entities.ts';
 import { eachConfig, eachNode } from '../model/entities.ts';
 
-import type { Problem, Severity } from './problem.ts';
+import type { Problem, Severity } from '../diagnostics/index.ts';
 import type { ValidationContext, Validator } from './report.ts';
 
 export type RuleScope = 'flow-set' | 'flow' | 'subflow';

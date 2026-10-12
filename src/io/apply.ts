@@ -11,8 +11,8 @@
 import { emitFlowSet } from '../emit/flowJson.ts';
 import type { FlowSet } from '../model/entities.ts';
 import type { PaletteType } from '../palette/model.ts';
-import type { Problem } from '../validate/problem.ts';
-import { hasErrors } from '../validate/problem.ts';
+import type { Problem } from '../diagnostics/index.ts';
+import { hasErrors } from '../diagnostics/index.ts';
 
 import { parseFlowFile } from '../import/fromFlowJson.ts';
 

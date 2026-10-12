@@ -17,7 +17,7 @@
 import { normalizeFlowSet } from '../model/normalize.ts';
 import type { FlowSet } from '../model/entities.ts';
 import type { PaletteType } from '../palette/model.ts';
-import type { Problem } from '../validate/problem.ts';
+import type { Problem } from '../diagnostics/index.ts';
 
 import { Builder, type FlowBuilder } from './builder.ts';
 import { layoutFlowSetWithDiagnostics, type LayoutOptions } from './layout.ts';

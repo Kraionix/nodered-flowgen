@@ -13,7 +13,7 @@ import { allIds, eachConfig, eachGroup, eachNode, type FlowSet } from '../model/
 import { effectiveOutputCount } from '../model/normalize.ts';
 import { isSubflowType, subflowDefinitionId } from '../palette/model.ts';
 
-import type { Problem } from './problem.ts';
+import type { Problem } from '../diagnostics/index.ts';
 import type { ValidationContext, Validator } from './report.ts';
 
 export const graphChecks: Validator = {

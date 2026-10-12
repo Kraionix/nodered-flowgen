@@ -12,7 +12,7 @@ import path from 'node:path';
 
 import { emitCheatSheet } from '../../palette/codegen/emitSnapshot.ts';
 import { emitTypes } from '../../palette/codegen/emitTypes.ts';
-import type { Problem } from '../../validate/problem.ts';
+import type { Problem } from '../../diagnostics/index.ts';
 
 import { flag, text, type OptionSpec } from '../args.ts';
 import { EXIT } from '../exit.ts';

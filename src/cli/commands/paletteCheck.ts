@@ -11,7 +11,7 @@ import path from 'node:path';
 
 import { diffPalette, describePalette, type PaletteSnapshot } from '../../palette/snapshot.ts';
 import { readSnapshotFile } from '../../palette/sources/snapshot.ts';
-import type { Problem } from '../../validate/problem.ts';
+import type { Problem } from '../../diagnostics/index.ts';
 
 import { flag, text, type OptionSpec } from '../args.ts';
 import { CliFailure, EXIT, UsageError } from '../exit.ts';
