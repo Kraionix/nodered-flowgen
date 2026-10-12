@@ -47,6 +47,12 @@ export interface ApplyResult {
   readonly plan: Plan;
   readonly rev: string;
   readonly receipt?: Receipt;
+  /**
+   * Set when the flow set *was* written but the receipt could not be. The deploy happened —
+   * reporting it as a failure would invite a retry that deploys the same thing twice — but the
+   * caller has lost its undo record, so it must be told, loudly.
+   */
+  readonly receiptError?: string;
   readonly message: string;
 }
 
@@ -108,33 +114,50 @@ export async function applyDeployment(options: ApplyOptions): Promise<ApplyResul
     });
     const payload = JSON.parse(emitFlowSet(merged.flowSet, { palette: options.palette })) as unknown[];
 
+    // The write and the receipt are separate failure domains: the first is the deploy, the second
+    // is our own bookkeeping. Failing the deploy because a directory was missing would be a lie —
+    // and it did happen once (the receipts directory is created two levels deep).
+    let deployed;
     try {
-      const deployed = await options.client.writeFlows(payload, state.rev);
-      const receipt = createReceipt({
-        target: options.target,
-        url: options.client.url,
-        previousRev: state.rev,
-        previousFlows: state.flows,
-        deployedRev: deployed.rev,
-        deployedAt: (options.now ?? (() => new Date()))().toISOString(),
-        summary: describePlan(plan),
-      });
-      if (options.receiptPath !== undefined) await writeReceipt(options.receiptPath, receipt);
-
-      return {
-        applied: true,
-        plan,
-        rev: deployed.rev,
-        receipt,
-        message: `deployed to ${options.client.url}`,
-      };
+      deployed = await options.client.writeFlows(payload, state.rev);
     } catch (cause) {
       if (cause instanceof AdminApiError && cause.code === 'version-mismatch' && attempt <= maxRetries) {
         // Someone else deployed while we were planning: re-read, re-plan, try again.
         continue;
       }
-      return abortFromError(cause, 'unreachable');
+      return abortFromError(cause, 'unreachable', plan);
     }
+
+    const receipt = createReceipt({
+      target: options.target,
+      url: options.client.url,
+      previousRev: state.rev,
+      previousFlows: state.flows,
+      deployedRev: deployed.rev,
+      deployedAt: (options.now ?? (() => new Date()))().toISOString(),
+      summary: describePlan(plan),
+    });
+
+    let receiptError: string | undefined;
+    if (options.receiptPath !== undefined) {
+      try {
+        await writeReceipt(options.receiptPath, receipt);
+      } catch (cause) {
+        receiptError = cause instanceof Error ? cause.message : String(cause);
+      }
+    }
+
+    return {
+      applied: true,
+      plan,
+      rev: deployed.rev,
+      receipt,
+      ...(receiptError === undefined ? {} : { receiptError }),
+      message:
+        receiptError === undefined
+          ? `deployed to ${options.client.url}`
+          : `deployed to ${options.client.url}, but the receipt could not be written: ${receiptError}`,
+    };
   }
 }
 
@@ -152,7 +175,7 @@ export async function rollbackDeployment(
   }
 }
 
-function abortFromError(cause: unknown, fallback: ApplyAbortReason): ApplyResult {
+function abortFromError(cause: unknown, fallback: ApplyAbortReason, plan: Plan = emptyPlan()): ApplyResult {
   if (cause instanceof AdminApiError) {
     const reason: ApplyAbortReason =
       cause.code === 'version-mismatch'
@@ -163,7 +186,9 @@ function abortFromError(cause: unknown, fallback: ApplyAbortReason): ApplyResult
     return {
       applied: false,
       reason,
-      plan: emptyPlan(),
+      // The plan is carried through the failure: it is what the caller was trying to do, and an
+      // empty one reads as "nothing to change", which is the opposite of what happened.
+      plan,
       rev: '',
       message: cause.message,
     };

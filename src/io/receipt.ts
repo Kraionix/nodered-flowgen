@@ -9,7 +9,8 @@
  * Credentials never appear here: the receipt is a flow set, and flow sets carry no secrets.
  */
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 import { err, ok, type Result } from '../result.ts';
 
@@ -77,7 +78,9 @@ export function parseReceipt(text: string): Result<Receipt, readonly ReceiptIssu
   });
 }
 
+/** Writes the receipt, creating its directory: the default path lives under `.flowgen/`. */
 export async function writeReceipt(file: string, receipt: Receipt): Promise<void> {
+  await mkdir(dirname(file), { recursive: true });
   await writeFile(file, serializeReceipt(receipt), 'utf8');
 }
 

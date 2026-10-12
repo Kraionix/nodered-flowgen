@@ -7,7 +7,8 @@
  * unchanged palette produces no file write, so a regeneration never shows up as a diff.
  */
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 import {
   parsePaletteSnapshot,
@@ -67,7 +68,9 @@ export interface WriteResult {
 
 /**
  * Writes only when the content differs. Returns `unchanged` otherwise, which is what lets
- * `palette pull` be run in CI without producing spurious diffs.
+ * `palette pull` be run in CI without producing spurious diffs. The directory is created when it
+ * is missing: `palettes/` does not exist in a fresh project, and failing there would make the
+ * first pull of every project a two-step ritual.
  */
 export async function writeSnapshotFile(
   file: string,
@@ -79,6 +82,7 @@ export async function writeSnapshotFile(
   if (existing === text) {
     return { status: 'unchanged', bytes: text.length };
   }
+  await mkdir(dirname(file), { recursive: true });
   await writeFile(file, text, 'utf8');
   return { status: 'written', bytes: text.length };
 }

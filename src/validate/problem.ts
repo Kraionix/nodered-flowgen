@@ -22,6 +22,7 @@ export type BuiltinProblemCode =
   | 'palette/ref-missing'
   | 'palette/ref-wrong-type'
   | 'palette/module-version-drift'
+  | 'palette/generated-stale'
   | 'graph/wire-target-missing'
   | 'graph/wire-arity'
   | 'graph/container-missing'

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -14,7 +14,7 @@ import { paletteProperty, paletteType, type PaletteNodeSet } from '../../src/pal
 import { filesystemSource } from '../../src/palette/sources/filesystem.ts';
 import { liveHttpSource } from '../../src/palette/sources/liveHttp.ts';
 import { overlay } from '../../src/palette/sources/overlay.ts';
-import { fileSnapshotSource, snapshotSource, writeSnapshotFile } from '../../src/palette/sources/snapshot.ts';
+import { fileSnapshotSource, readSnapshotFile, snapshotSource, writeSnapshotFile } from '../../src/palette/sources/snapshot.ts';
 import { applyOverlays, PaletteSourceError, rebuildPalette } from '../../src/palette/sources/source.ts';
 import { subflowOverlay, subflowPaletteType } from '../../src/palette/sources/subflow.ts';
 import { unwrapOrThrow } from '../../src/result.ts';
@@ -252,9 +252,17 @@ test('an overlay may pin a version or declare references without a property', ()
   assert.equal(patched.types['inject']?.defaults['script']?.type, null, 'multi-target refs carry no single type');
 });
 
-test('snapshot files written by the source round-trip through the reader', async () => {
+test('snapshot files written by the source round-trip through the reader, creating directories', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'flowgen-snap2-'));
   const file = path.join(dir, 'nested', 'palette.json');
-  await writeFile(path.join(dir, 'placeholder'), '', 'utf8');
-  await assert.rejects(() => writeSnapshotFile(file, baseSnapshot()), /ENOENT/);
+
+  // A fresh project has no `palettes/` directory: writing has to create it, or the first pull of
+  // every project fails.
+  const written = await writeSnapshotFile(file, baseSnapshot());
+  assert.equal(written.status, 'written');
+  assert.equal((await readSnapshotFile(file)).contentHash, baseSnapshot().contentHash);
+
+  const again = await writeSnapshotFile(file, baseSnapshot());
+  assert.equal(again.status, 'unchanged');
+  assert.equal(again.bytes, written.bytes);
 });

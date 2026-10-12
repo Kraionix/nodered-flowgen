@@ -71,6 +71,21 @@ export {
 } from './validate/report.ts';
 
 export {
+  DEFAULT_CONFIG_FILE,
+  DEFAULT_LOCKFILE,
+  DEFAULT_PROFILE,
+  DEFAULT_RECEIPTS_DIR,
+  defineConfig,
+  resolveConfig,
+  resolveProfile,
+  type FlowgenConfig,
+  type PaletteProfile,
+  type ResolvedConfig,
+  type ResolvedProfile,
+  type TargetConfig,
+} from './config/index.ts';
+
+export {
   parseFlowFile,
   parseFlowSetText,
   type ImportOptions,
