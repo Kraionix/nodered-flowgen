@@ -61,13 +61,18 @@ export {
   formatProblems,
   formatSkipped,
   runValidators,
-  type Capability,
+  type EnvironmentKey,
   type FormatOptions,
+  type LiveInstance,
+  type LiveInstanceClient,
+  type NrlintPort,
+  type RuntimeProbePort,
   type SkippedValidator,
   type ValidationContext,
   type ValidationReport,
   type ValidationRun,
   type Validator,
+  type ValidatorEnvironment,
 } from './validate/report.ts';
 
 export {

@@ -107,7 +107,7 @@ export async function importCommand(context: CliContext, args: ParsedArgs): Prom
   const overlaid = subflowOverlay(materialised.flowSet.subflows.map(subflowDefinitionLike)).apply(palette.snapshot);
   const printed = printFlowSet(materialised.flowSet, { palette: overlaid.types, source: from ?? url });
 
-  const report = runValidators(
+  const report = await runValidators(
     defaultValidators({ extra: project.config.validators }),
     { flowSet: materialised.flowSet, palette: overlaid.types, targetVersion: palette.snapshot.nodeRedVersion },
     { mode: 'collect', priorProblems: normalized.fixes },

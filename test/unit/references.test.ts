@@ -106,13 +106,13 @@ function flowSetOf(nodes: readonly Node[], extra: Partial<FlowSet> = {}): FlowSe
   );
 }
 
-function codes(flowSet: FlowSet): readonly string[] {
-  const report = runValidators(defaultValidators(), { flowSet, palette: PALETTE }, { mode: 'collect' });
+async function codes(flowSet: FlowSet): Promise<readonly string[]> {
+  const report = await runValidators(defaultValidators(), { flowSet, palette: PALETTE }, { mode: 'collect' });
   return report.problems.filter((problem) => problem.severity !== 'info').map((problem) => problem.code);
 }
 
-function infos(flowSet: FlowSet): readonly string[] {
-  const report = runValidators(defaultValidators(), { flowSet, palette: PALETTE }, { mode: 'collect' });
+async function infos(flowSet: FlowSet): Promise<readonly string[]> {
+  const report = await runValidators(defaultValidators(), { flowSet, palette: PALETTE }, { mode: 'collect' });
   return report.problems.filter((problem) => problem.severity === 'info').map((problem) => `${problem.code} ${problem.entity}`);
 }
 
@@ -120,7 +120,7 @@ function infos(flowSet: FlowSet): readonly string[] {
 // The analysis itself
 // ---------------------------------------------------------------------------------------
 
-test('referenceTargets reads every declared reference, from nodes and from config nodes', () => {
+test('referenceTargets reads every declared reference, from nodes and from config nodes', async () => {
   const group = node('group_1', 'ui_group', { name: 'KPIs', tab: 'tab_9' });
   assert.deepEqual(referenceTargets(group, PALETTE), [{ property: 'tab', id: 'tab_9' }]);
 
@@ -131,7 +131,7 @@ test('referenceTargets reads every declared reference, from nodes and from confi
   ]);
 });
 
-test('an empty or blank reference is unset, not dangling', () => {
+test('an empty or blank reference is unset, not dangling', async () => {
   // The editor writes `"broker": ""` for every optional config reference the author has not
   // picked, so treating that as a dangling reference would make the validator cry wolf.
   assert.deepEqual(referenceTargets(node('a', 'mqtt in', { broker: '' }), PALETTE), []);
@@ -139,7 +139,7 @@ test('an empty or blank reference is unset, not dangling', () => {
   assert.deepEqual(referenceTargets(node('a', 'link out', { links: ['', 'in_1'] }), PALETTE), [{ property: 'links', id: 'in_1' }]);
 });
 
-test('outgoingTargets is wires plus references; inboundReferences is the reverse index', () => {
+test('outgoingTargets is wires plus references; inboundReferences is the reverse index', async () => {
   const set = flowSetOf([
     node('out_1', 'link out', { links: ['in_1'] }),
     node('in_1', 'link in', { links: ['out_1'] }),
@@ -164,7 +164,7 @@ test('outgoingTargets is wires plus references; inboundReferences is the reverse
   assert.equal(inbound.get('sink'), undefined, 'containment is not a reference');
 });
 
-test('inboundReferences includes subflow port links', () => {
+test('inboundReferences includes subflow port links', async () => {
   const set = flowSetOf([node('work', 'debug')], {
     subflows: [
       {
@@ -194,27 +194,27 @@ test('inboundReferences includes subflow port links', () => {
 // P2-10: a config node's references are checked
 // ---------------------------------------------------------------------------------------
 
-test('a dangling reference held by a config node is an error', () => {
+test('a dangling reference held by a config node is an error', async () => {
   const set = flowSetOf([], {
     configs: [{ id: 'group_1', type: 'ui_group', props: { known: { name: 'KPIs', tab: 'tab_deleted' }, extras: {} } }],
   });
 
-  assert.deepEqual(codes(set), ['palette/ref-missing']);
-  const report = runValidators(defaultValidators(), { flowSet: set, palette: PALETTE }, { mode: 'collect' });
+  assert.deepEqual(await codes(set), ['palette/ref-missing']);
+  const report = await runValidators(defaultValidators(), { flowSet: set, palette: PALETTE }, { mode: 'collect' });
   const problem = report.problems.find((entry) => entry.code === 'palette/ref-missing');
   assert.equal(problem?.entity, 'group_1');
   assert.equal(problem?.path, 'props.tab');
   assert.match(problem?.message ?? '', /points at "tab_deleted"/);
 });
 
-test('a ui_group whose tab exists is fine, and whose tab is the wrong type is not', () => {
+test('a ui_group whose tab exists is fine, and whose tab is the wrong type is not', async () => {
   const withTab = flowSetOf([], {
     configs: [
       { id: 'tab_1_config', type: 'ui_tab', props: { known: { name: 'KPIs' }, extras: {} } },
       { id: 'group_1', type: 'ui_group', props: { known: { name: 'KPIs', tab: 'tab_1_config' }, extras: {} } },
     ],
   });
-  assert.deepEqual(codes(withTab), []);
+  assert.deepEqual(await codes(withTab), []);
 
   const wrongType = flowSetOf([], {
     configs: [
@@ -222,44 +222,44 @@ test('a ui_group whose tab exists is fine, and whose tab is the wrong type is no
       { id: 'group_1', type: 'ui_group', props: { known: { name: 'KPIs', tab: 'broker_1' }, extras: {} } },
     ],
   });
-  assert.deepEqual(codes(wrongType), ['palette/ref-wrong-type']);
+  assert.deepEqual(await codes(wrongType), ['palette/ref-wrong-type']);
 });
 
-test('a node reference is still checked, node and config alike', () => {
+test('a node reference is still checked, node and config alike', async () => {
   const set = flowSetOf([node('sub', 'mqtt in', { broker: 'no_such_broker' })]);
-  assert.deepEqual(codes(set), ['palette/ref-missing']);
+  assert.deepEqual(await codes(set), ['palette/ref-missing']);
 });
 
 // ---------------------------------------------------------------------------------------
 // P2-11: a link pair is connected
 // ---------------------------------------------------------------------------------------
 
-test('a link out / link in pair is connected, not two isolated nodes', () => {
+test('a link out / link in pair is connected, not two isolated nodes', async () => {
   const set = flowSetOf([node('out_1', 'link out', { links: ['in_1'] }), node('in_1', 'link in', { links: ['out_1'] })]);
-  assert.deepEqual(infos(set), [], 'neither half of a link pair is a leftover');
+  assert.deepEqual(await infos(set), [], 'neither half of a link pair is a leftover');
 });
 
-test('a link out with nothing connected to it is still info-level', () => {
+test('a link out with nothing connected to it is still info-level', async () => {
   const set = flowSetOf([node('out_1', 'link out'), node('in_1', 'link in')]);
-  assert.deepEqual(infos(set), ['graph/unreachable out_1', 'graph/unreachable in_1']);
-  assert.deepEqual(codes(set), [], 'an unwired link node is never an error');
+  assert.deepEqual(await infos(set), ['graph/unreachable out_1', 'graph/unreachable in_1']);
+  assert.deepEqual(await codes(set), [], 'an unwired link node is never an error');
 });
 
-test('a wire into a link out makes both halves connected', () => {
+test('a wire into a link out makes both halves connected', async () => {
   const set = flowSetOf([
     node('tick', 'inject', {}, { wires: [['out_1']] }),
     node('out_1', 'link out', { links: ['in_1'] }),
     node('in_1', 'link in', {}, { wires: [['sink']] }),
     node('sink', 'debug'),
   ]);
-  assert.deepEqual(infos(set), []);
+  assert.deepEqual(await infos(set), []);
 });
 
-test('a config reference counts as a connection too', () => {
+test('a config reference counts as a connection too', async () => {
   // A dashboard widget that hangs off a group is not a leftover, and neither is an mqtt node
   // that points at a broker: both are "wired up" as far as the author is concerned.
   const set = flowSetOf([node('sub', 'mqtt in', { broker: 'broker_1' })], {
     configs: [{ id: 'broker_1', type: 'mqtt-broker', props: { known: { name: 'broker' }, extras: {} } }],
   });
-  assert.deepEqual(infos(set), []);
+  assert.deepEqual(await infos(set), []);
 });

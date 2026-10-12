@@ -272,8 +272,8 @@ export function declaredPorts(
 }
 
 /** Convenience for callers that only need the flow set. */
-export function validatePalette(context: ValidationContext): readonly Problem[] {
-  return paletteChecks.validate(context);
+export async function validatePalette(context: ValidationContext): Promise<readonly Problem[]> {
+  return paletteChecks.validate(context, {});
 }
 
 export type { FlowSet };

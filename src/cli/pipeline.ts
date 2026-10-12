@@ -12,17 +12,18 @@
 import { subflowOverlay } from '../palette/sources/subflow.ts';
 import { applyOverlays } from '../palette/sources/source.ts';
 import type { PaletteType } from '../palette/model.ts';
+import type { PaletteSnapshot } from '../palette/snapshot.ts';
 import { subflowDefinitionLike } from '../model/subflows.ts';
 import type { FlowSet } from '../model/entities.ts';
 import { lockfileIdMap, ownedContainers, knownIds } from '../io/lockfile.ts';
 import { AdminApiClient } from '../io/adminApi.ts';
 import { defaultValidators } from '../validate/index.ts';
-import { runValidators, type Capability, type ValidationReport } from '../validate/report.ts';
+import { runValidators, type ValidationReport, type ValidatorEnvironment } from '../validate/report.ts';
 import type { Problem } from '../diagnostics/index.ts';
 
 import { envToken, type CliContext } from './context.ts';
 import { UsageError } from './exit.ts';
-import { loadPalette, type LoadedPalette, type PaletteRequest } from './palette.ts';
+import { loadLivePalette, loadPalette, type LoadedPalette, type PaletteRequest } from './palette.ts';
 import type { Project } from './project.ts';
 
 export interface TargetRequest {
@@ -161,20 +162,54 @@ export interface Prepared {
 export async function prepare(context: CliContext, project: Project, options: PrepareOptions): Promise<Prepared> {
   const palette = await loadPalette(context, project, options.palette);
   const built = buildProject(project, palette);
-  const capabilities = new Set<Capability>();
-  if (options.target !== undefined) capabilities.add('liveInstance');
+  const environment = await environmentFor(context, palette, options.target);
 
-  const report = runValidators(
+  const report = await runValidators(
     defaultValidators({ extra: project.config.validators }),
     {
       flowSet: built.flowSet,
       palette: built.palette,
       targetVersion: palette.snapshot.nodeRedVersion,
     },
-    { mode: options.mode ?? 'collect', capabilities, priorProblems: built.problems },
+    { mode: options.mode ?? 'collect', environment, priorProblems: built.problems },
   );
 
   return { palette, built, report };
+}
+
+/**
+ * What the validators may reach for, given what this invocation has.
+ *
+ * A target means a live instance: the palette it actually runs (which is what `deploy/missing-types`
+ * compares against) and a read-only client. The palette is fetched once and only when the loaded
+ * one is not already the instance's own — an offline snapshot says nothing about what the target
+ * has installed, and a check that silently compared the flow set with the wrong palette would be
+ * worse than a skip.
+ *
+ * A failure to reach the instance leaves the port out, which turns into the loud `skipped: needs
+ * liveInstance` line rather than a validator that quietly checked less.
+ */
+async function environmentFor(
+  context: CliContext,
+  palette: LoadedPalette,
+  target: ResolvedTarget | undefined,
+): Promise<ValidatorEnvironment> {
+  if (target === undefined) return {};
+
+  let live: PaletteSnapshot;
+  try {
+    live = palette.origin === 'live' ? palette.snapshot : await loadLivePalette(context, target.url, target.token);
+  } catch {
+    return {};
+  }
+
+  return {
+    liveInstance: {
+      client: adminClientFor(context, target),
+      palette: live.types,
+      version: live.nodeRedVersion,
+    },
+  };
 }
 
 /** Containers this tool owns on a target, and every id it has ever allocated. */

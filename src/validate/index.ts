@@ -10,9 +10,11 @@
  * checking less.
  */
 
+import { credentialChecks } from './credentialChecks.ts';
 import { graphChecks } from './graphChecks.ts';
 import { overlayRulesValidator, type OverlayRule } from './overlayRules.ts';
 import { paletteChecks } from './paletteChecks.ts';
+import { targetChecks } from './targetChecks.ts';
 import type { Validator } from './report.ts';
 
 export interface ValidatorSetOptions {
@@ -21,8 +23,18 @@ export interface ValidatorSetOptions {
 }
 
 export function defaultValidators(options: ValidatorSetOptions = {}): readonly Validator[] {
-  return [paletteChecks, graphChecks, overlayRulesValidator(options.rules ?? []), ...(options.extra ?? [])];
+  return [
+    // Offline first: the flow set against the palette it was written for, then against itself.
+    paletteChecks,
+    graphChecks,
+    // Then the parts of the world the caller could hand over: what the target has installed, and
+    // where credential values would come from. Both report a *skip* when their port is absent.
+    targetChecks,
+    credentialChecks,
+    overlayRulesValidator(options.rules ?? []),
+    ...(options.extra ?? []),
+  ];
 }
 
-export { graphChecks, paletteChecks, overlayRulesValidator };
+export { credentialChecks, graphChecks, paletteChecks, overlayRulesValidator, targetChecks };
 export type { OverlayRule };

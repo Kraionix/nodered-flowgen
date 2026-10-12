@@ -145,17 +145,17 @@ function paletteWithSubflows(flowSet: FlowSet): Record<string, PaletteType> {
   return { ...overlaid.types };
 }
 
-function validate(flowSet: FlowSet) {
-  return runValidators(
+async function validate(flowSet: FlowSet) {
+  return await runValidators(
     defaultValidators(),
     { flowSet, palette: paletteWithSubflows(flowSet), targetVersion: null },
-    { mode: 'bail', capabilities: new Set() },
+    { mode: 'bail' },
   );
 }
 
 test('the authored flow set validates with no errors', async () => {
   const flowSet = buildFlowSet();
-  const report = validate(flowSet);
+  const report = await validate(flowSet);
   assert.deepEqual(
     report.problems.filter((problem) => problem.severity === 'error'),
     [],
@@ -208,7 +208,7 @@ test('apply creates the containers, keeps a foreign tab, and the flow answers at
     palette,
     owned: new Set(),
     ownedEntities: new Set(),
-    problems: validate(flowSet).problems,
+    problems: (await validate(flowSet)).problems,
     receiptPath: path.join(instance.userDir, 'receipt.json'),
   });
   assert.equal(result.applied, true, result.message);

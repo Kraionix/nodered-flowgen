@@ -69,10 +69,10 @@ async function pipeline(name: string, layout = false): Promise<Pipeline> {
 
   const normalised = normalizeFlowSetWithFixes(imported, { palette });
   const flowSet = layout ? layoutFlowSet(normalised.flowSet) : normalised.flowSet;
-  const report = runValidators(
+  const report = await runValidators(
     defaultValidators(),
     { flowSet, palette, targetVersion: null },
-    { mode: 'collect', capabilities: new Set() },
+    { mode: 'collect' },
   );
 
   return {

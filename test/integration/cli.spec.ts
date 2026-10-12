@@ -303,3 +303,27 @@ test('import refuses what it cannot import, and says why', async () => {
   assert.equal(both.code, 2);
   assert.match(both.stderr, /--from and --url are alternatives/);
 });
+
+test('validate reports what it could not check, and checks the target when it has one', async () => {
+  const offline = await cli('validate', '--json');
+  assert.equal(offline.code, 0, offline.stdout + offline.stderr);
+  const cached = JSON.parse(offline.stdout) as {
+    report: { skipped: { name: string; missing: string[] }[]; ran: string[] };
+  };
+  assert.deepEqual(
+    cached.report.skipped,
+    [{ name: 'target', missing: ['liveInstance'] }],
+    'a validator that needs the instance says so instead of quietly checking less',
+  );
+  assert.ok(cached.report.ran.includes('credentials'), 'the offline checks still run');
+
+  const live = await cli('validate', '--live', '--url', instance.url, '--token-env', 'NR_TOKEN', '--json');
+  assert.equal(live.code, 0, live.stdout + live.stderr);
+  const checked = JSON.parse(live.stdout) as {
+    exitCode: number;
+    report: { skipped: { name: string }[]; ran: string[] };
+  };
+  assert.deepEqual(checked.report.skipped, [], 'nothing is skipped once the instance is reachable');
+  assert.ok(checked.report.ran.includes('target'), 'so the target check actually runs');
+  assert.equal(checked.exitCode, 0, 'this instance has every type the project uses');
+});

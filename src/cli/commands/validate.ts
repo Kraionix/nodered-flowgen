@@ -15,7 +15,7 @@ import { flag, text, type OptionSpec } from '../args.ts';
 import { EXIT, UsageError } from '../exit.ts';
 import { lines, type CommandResult } from '../output.ts';
 import { loadProject } from '../project.ts';
-import { prepare } from '../pipeline.ts';
+import { prepare, resolveTarget } from '../pipeline.ts';
 import type { CliContext } from '../context.ts';
 import type { ParsedArgs } from '../args.ts';
 
@@ -50,14 +50,15 @@ export async function validateCommand(context: CliContext, args: ParsedArgs): Pr
     },
     ...(live && liveUrl !== undefined
       ? {
-          target: {
-            name: 'cli',
+          // Through `resolveTarget` rather than hand-built: `--token-env` and the profile's own
+          // `tokenEnv` are what make a `--live` check work against an instance with adminAuth.
+          target: resolveTarget(context, project, {
+            target: 'cli',
             url: liveUrl,
             token: text(args, 'token'),
-            profile: text(args, 'profile') ?? project.config.defaultProfile,
-            prune: undefined,
-            readOnly: false,
-          },
+            tokenEnv: text(args, 'token-env'),
+            profile: text(args, 'profile'),
+          }),
         }
       : {}),
     mode: 'collect',

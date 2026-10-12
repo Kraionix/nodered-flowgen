@@ -39,6 +39,7 @@ export type BuiltinProblemCode =
   | 'graph/duplicate-id'
   | 'graph/subflow-recursion'
   | 'graph/unreachable'
+  | 'credentials/no-provider'
   | 'layout/cycle'
   | 'normalize/wire-arity';
 
