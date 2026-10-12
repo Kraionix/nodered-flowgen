@@ -27,6 +27,7 @@ import type {
   FlowSet,
   Group,
   Node,
+  NodeProps,
   SubflowDef,
 } from '../model/entities.ts';
 import type { KnownType, NodeRef, PropsFor, Ref } from '../typing.ts';
@@ -42,15 +43,19 @@ function refId(ref: Ref): EntityId {
 /**
  * Converts authored values into flow-file values: a node handle becomes its id, and handles
  * nested in arrays or objects (a `link out[]` property, a list of targets) are converted too.
- * Without this the emitter would write `{id, type, to, toPort}` into the flow file.
+ *
+ * The conversion is deferred to build time on purpose (see `Builder#resolveProps`): a property
+ * value that *looks* like a handle but points at nothing in this flow set is data — an inject
+ * payload of `{"id": "a", "type": "b"}`, say — and must be written verbatim rather than
+ * silently replaced by `"a"`.
  */
-function toFlowValue(value: unknown, depth = 0): unknown {
+function toFlowValue(value: unknown, ids: ReadonlySet<string>, depth = 0): unknown {
   if (value === null || typeof value !== 'object' || depth > 8) return value;
-  if (Array.isArray(value)) return value.map((entry) => toFlowValue(entry, depth + 1));
-  if (isNodeHandle(value)) return value.id;
+  if (Array.isArray(value)) return value.map((entry) => toFlowValue(entry, ids, depth + 1));
+  if (isNodeHandle(value) && ids.has(value.id)) return value.id;
   const result: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    result[key] = toFlowValue(entry, depth + 1);
+    result[key] = toFlowValue(entry, ids, depth + 1);
   }
   return result;
 }
@@ -79,10 +84,10 @@ export interface ContainerHandle<T extends string = string> {
   node<K extends KnownType>(type: K, props?: PropsFor<K>): NodeHandle<K>;
   /** Escape hatch: any node type, with an open property bag. */
   untyped(type: string, props?: Readonly<Record<string, unknown>>): NodeHandle;
-  /** Creates a config node scoped to this container. */
-  config<K extends KnownType>(type: K, props?: PropsFor<K>): NodeHandle<K>;
+  /** Creates a config node scoped the way the container scopes them by default. */
+  config<K extends KnownType>(type: K, props?: PropsFor<K>, options?: ConfigScopeOptions): NodeHandle<K>;
   /** Escape hatch for a config node whose type the palette may not cover. */
-  untypedConfig(type: string, props?: Readonly<Record<string, unknown>>): NodeHandle;
+  untypedConfig(type: string, props?: Readonly<Record<string, unknown>>, options?: ConfigScopeOptions): NodeHandle;
   /** Wires each item to the next one, output 0 to input 0. */
   chain(...items: readonly Ref[]): void;
   /** Creates an instance of a subflow inside this container. */
@@ -91,11 +96,37 @@ export interface ContainerHandle<T extends string = string> {
   add(...items: readonly Ref[]): void;
 }
 
+/**
+ * Where a config node belongs.
+ *
+ * A container's default is the editor's: a config node dropped on a tab's canvas is *global*
+ * (Node-RED resolves config nodes by dependency, so scoping it to the tab would only hide it
+ * from other tabs), while one dropped inside a subflow belongs to that subflow. An imported
+ * flow file says explicitly which it meant, so the printer can ask for either.
+ */
+export interface ConfigScopeOptions {
+  readonly scope?: 'flow-set' | 'container';
+}
+
 export interface InstanceOptions {
   readonly key?: string;
   readonly name?: string;
   /** Parameter overrides; values are converted using the declared parameter types. */
   readonly env?: Readonly<Record<string, unknown>>;
+  /** Written as `d: true`. */
+  readonly disabled?: boolean;
+  readonly x?: number;
+  readonly y?: number;
+  readonly w?: number;
+  readonly h?: number;
+  /**
+   * Anything else the instance declares, verbatim.
+   *
+   * A subflow instance only declares `name`, so everything an imported instance carries beyond
+   * the envelope (`info`, `l`, `icon`, a property a newer runtime added) has to come through
+   * here — dropping it would make `import → build` lossy for exactly the files this is for.
+   */
+  readonly props?: Readonly<Record<string, unknown>>;
 }
 
 export interface FlowOptions {
@@ -112,6 +143,17 @@ export interface GroupOptions {
   readonly name: string;
   readonly style?: Readonly<Record<string, unknown>>;
   readonly env?: ParamDeclarations;
+  /**
+   * The group's box, top-left based.
+   *
+   * Left out, the layout computes the box from the members — the editor's own rule, and what an
+   * author almost always wants. Given, it is kept verbatim: an imported group box came from the
+   * editor's DOM measurements, and recomputing it would move every group in the file.
+   */
+  readonly x?: number;
+  readonly y?: number;
+  readonly w?: number;
+  readonly h?: number;
 }
 
 export interface SubflowOptions {
@@ -122,8 +164,17 @@ export interface SubflowOptions {
   readonly color?: string;
   readonly icon?: string;
   readonly params?: ParamDeclarations;
+  /** Written verbatim; the editor's own hint list for the palette manager. */
+  readonly meta?: Readonly<Record<string, unknown>>;
   /** Port labels: their count defines how many input/output ports the subflow has. */
-  readonly ports?: { readonly in?: readonly string[]; readonly out?: readonly string[] };
+  readonly ports?: {
+    readonly in?: readonly string[];
+    readonly out?: readonly string[];
+    /** Advisory port geometry; the editor repositions ports on import anyway. */
+    readonly inPosition?: { readonly x: number; readonly y: number };
+    readonly outPosition?: { readonly x: number; readonly y: number };
+    readonly statusPosition?: { readonly x: number; readonly y: number };
+  };
 }
 
 export interface SubflowHandle extends ContainerHandle<string> {
@@ -134,6 +185,8 @@ export interface SubflowHandle extends ContainerHandle<string> {
   out(node: Ref, port?: number, index?: number): void;
   /** Routes `node`'s status output to the subflow status port. */
   status(node: Ref, port?: number): void;
+  /** A group inside the subflow body. A subflow body is a canvas like any other. */
+  group(key: string, options: GroupOptions): GroupHandle;
 }
 
 export interface FlowHandle extends ContainerHandle<'tab'> {
@@ -205,9 +258,27 @@ export class Builder implements FlowBuilder {
       modules[type.module] = type.version;
     }
 
-    const nodesOf = (z: string): Node[] => this.#nodes.filter((node) => node.z === z);
-    const configsOf = (z: string): ConfigNode[] => this.#configs.filter((config) => config.z === z);
-    const groupsOf = (z: string): Group[] => this.#groups.filter((group) => group.z === z);
+    // Handles become ids here, once every entity exists: a reference may point *forward* (a
+    // `link out` before its `link in`), so the resolution cannot happen at creation time.
+    const known = new Set<string>(this.#flows.map((flow) => flow.id));
+    for (const { definition } of this.#subflows) known.add(definition.id);
+    for (const group of this.#groups) known.add(group.id);
+    for (const config of this.#configs) known.add(config.id);
+    for (const node of this.#nodes) known.add(node.id);
+
+    const resolveProps = (props: NodeProps): NodeProps => ({
+      known: this.#resolveProps(props.known, known),
+      extras: this.#resolveProps(props.extras, known),
+    });
+    const resolveNode = (node: Node): Node => ({ ...node, props: resolveProps(node.props) });
+
+    const nodesOf = (z: string): Node[] =>
+      this.#nodes.filter((node) => (node.z ?? '') === z).map(resolveNode);
+    const configsOf = (z: string): ConfigNode[] =>
+      this.#configs
+        .filter((config) => (config.z ?? '') === z)
+        .map((config) => ({ ...config, props: resolveProps(config.props) }));
+    const groupsOf = (z: string): Group[] => this.#groups.filter((group) => (group.z ?? '') === z);
 
     return {
       flows: this.#flows.map((flow) => ({
@@ -222,10 +293,19 @@ export class Builder implements FlowBuilder {
         configs: configsOf(definition.id),
         groups: groupsOf(definition.id),
       })),
-      configs: this.#configs.filter((config) => config.z === undefined || config.z === ''),
-      loose: this.#nodes.filter((node) => node.z === undefined || node.z === ''),
+      configs: configsOf(''),
+      loose: nodesOf(''),
       modules,
     };
+  }
+
+  #resolveProps(
+    props: Readonly<Record<string, unknown>>,
+    known: ReadonlySet<string>,
+  ): Record<string, unknown> {
+    const resolved: Record<string, unknown> = {};
+    for (const [name, value] of Object.entries(props)) resolved[name] = toFlowValue(value, known);
+    return resolved;
   }
 
   // ------------------------------------------------------------------------------------
@@ -268,8 +348,13 @@ export class Builder implements FlowBuilder {
       ...(options.color === undefined ? {} : { color: options.color }),
       ...(options.icon === undefined ? {} : { icon: options.icon }),
       env,
-      meta: {},
-      ports,
+      meta: { ...(options.meta ?? {}) },
+      ports: {
+        ...ports,
+        ...(options.ports?.inPosition === undefined ? {} : { inPosition: options.ports.inPosition }),
+        ...(options.ports?.outPosition === undefined ? {} : { outPosition: options.ports.outPosition }),
+        ...(options.ports?.statusPosition === undefined ? {} : { statusPosition: options.ports.statusPosition }),
+      },
       ...(options.ports?.in === undefined ? {} : { inputLabels: [...options.ports.in] }),
       ...(options.ports?.out === undefined ? {} : { outputLabels: [...options.ports.out] }),
       nodes: [],
@@ -299,6 +384,7 @@ export class Builder implements FlowBuilder {
       status: (node, port = 0) => {
         ports.status.push({ node: refId(node), port });
       },
+      group: (groupKey, groupOptions) => this.#createGroup(id, groupKey, groupOptions),
     };
 
     body(handle);
@@ -314,7 +400,8 @@ export class Builder implements FlowBuilder {
       z,
       ...(options.style === undefined ? {} : { style: options.style }),
       ...(env === undefined ? {} : { env }),
-      geometry: { x: 0, y: 0, w: 0, h: 0 },
+      // An all-zero box means "not placed yet": the layout computes it from the members.
+      geometry: readGeometry(options) ?? { x: 0, y: 0, w: 0, h: 0 },
     });
 
     return { id, type: 'group', ref: { id, type: 'group' }, ...this.#containerMethods(z, id) };
@@ -326,7 +413,8 @@ export class Builder implements FlowBuilder {
    * `scopeConfig` is the one place where containers differ: a config node created *inside a
    * subflow* belongs to that subflow (Node-RED supports subflow-local config nodes), while one
    * created while editing a tab is global — which is what the editor does when you drop a
-   * broker onto the canvas.
+   * broker onto the canvas. `ConfigScopeOptions.scope` overrides the default in either
+   * direction, because an imported flow file states the scope it meant.
    */
   #containerMethods(
     z: string,
@@ -335,23 +423,25 @@ export class Builder implements FlowBuilder {
   ): {
     node: <K extends KnownType>(type: K, props?: PropsFor<K>) => NodeHandle<K>;
     untyped: (type: string, props?: Readonly<Record<string, unknown>>) => NodeHandle;
-    config: <K extends KnownType>(type: K, props?: PropsFor<K>) => NodeHandle<K>;
-    untypedConfig: (type: string, props?: Readonly<Record<string, unknown>>) => NodeHandle;
+    config: <K extends KnownType>(type: K, props?: PropsFor<K>, options?: ConfigScopeOptions) => NodeHandle<K>;
+    untypedConfig: (type: string, props?: Readonly<Record<string, unknown>>, options?: ConfigScopeOptions) => NodeHandle;
     chain: (...items: readonly Ref[]) => void;
     instance: (subflow: SubflowHandle | string, options?: InstanceOptions) => NodeHandle;
     add: (...items: readonly Ref[]) => void;
   } {
+    const scopeOf = (options: ConfigScopeOptions | undefined): string =>
+      (options?.scope ?? (scopeConfig ? 'container' : 'flow-set')) === 'container' ? z : '';
     return {
       node: <K extends KnownType>(type: K, props?: PropsFor<K>): NodeHandle<K> =>
         this.#createNode(type as string, (props ?? {}) as Readonly<Record<string, unknown>>, z, g) as NodeHandle<K>,
       untyped: (type, props = {}) => this.#createNode(type, props, z, g),
-      config: <K extends KnownType>(type: K, props?: PropsFor<K>): NodeHandle<K> =>
+      config: <K extends KnownType>(type: K, props?: PropsFor<K>, options?: ConfigScopeOptions): NodeHandle<K> =>
         this.#createConfig(
           type as string,
           (props ?? {}) as Readonly<Record<string, unknown>>,
-          scopeConfig ? z : '',
+          scopeOf(options),
         ) as NodeHandle<K>,
-      untypedConfig: (type, props = {}) => this.#createConfig(type, props, scopeConfig ? z : ''),
+      untypedConfig: (type, props = {}, options) => this.#createConfig(type, props, scopeOf(options)),
       chain: (...items) => this.#chain(items),
       instance: (subflow, options = {}) => this.#createInstance(subflow, options, z, g),
       add: (...items) => {
@@ -380,11 +470,15 @@ export class Builder implements FlowBuilder {
    * instead. Library code that ships its own node family — the dashboard helper — needs to say
    * "config, whatever the palette says".
    */
-  untypedConfig(type: string, props: Readonly<Record<string, unknown>> = {}): NodeHandle {
+  untypedConfig(type: string, props: Readonly<Record<string, unknown>> = {}, options?: ConfigScopeOptions): NodeHandle {
+    // The root builder is not a container, so a config node created here is always shared;
+    // `scope: 'container'` has nothing to attach to and is ignored rather than guessed at.
+    void options;
     return this.#createConfig(type, props, '');
   }
 
-  config<K extends KnownType>(type: K, props?: PropsFor<K>): NodeHandle<K> {
+  config<K extends KnownType>(type: K, props?: PropsFor<K>, options?: ConfigScopeOptions): NodeHandle<K> {
+    void options;
     return this.#createConfig(type as string, (props ?? {}) as Readonly<Record<string, unknown>>, '') as NodeHandle<K>;
   }
 
@@ -467,24 +561,35 @@ export class Builder implements FlowBuilder {
     const entry = this.#subflows.find((candidate) => candidate.definition.id === definitionId);
     if (entry === undefined) throw new Error(`instance(): no subflow definition with id "${definitionId}"`);
 
-    const props: Record<string, unknown> = { name: options.name ?? '' };
+    // The envelope wins over the raw bag, and the bag keeps its own key order: it is what an
+    // imported instance carried, and property order is part of the emitted document.
+    const props: Record<string, unknown> = { ...(options.props ?? {}) };
+    if (options.name !== undefined) props['name'] = options.name;
+    else if (!Object.hasOwn(props, 'name')) props['name'] = '';
+    if (options.disabled !== undefined) props['disabled'] = options.disabled;
     if (options.env !== undefined) props['env'] = options.env;
     if (options.key !== undefined) props['key'] = options.key;
+    for (const axis of ['x', 'y', 'w', 'h'] as const) {
+      if (options[axis] !== undefined) props[axis] = options[axis];
+    }
 
     const type = subflowTypeId(definitionId);
     const paletteType = this.#palette[type] ?? null;
     const key = options.key ?? `${entry.definition.name}_instance`;
     const id = this.#allocate(z === '' ? `instance:${key}` : `instance:${z}/${key}`, key);
     const { known, extras } = this.#splitProps(props, paletteType);
-    const env = readInstanceEnv(type, { env: options.env ?? {} }, this.#params);
+    const env = readInstanceEnv(type, props, this.#params);
+    const geometry = readGeometry(props);
 
     const node: Node = {
       id,
       type,
       ...(z === '' ? {} : { z }),
       ...(g === undefined ? {} : { g }),
+      ...(props['disabled'] === true ? { disabled: true } : {}),
       props: { known, extras },
       ...(env === undefined ? {} : { env }),
+      ...(geometry === undefined ? {} : { geometry }),
       // One array per declared output port, empty where nothing is wired yet — the editor always
       // writes exactly one, and `[]` is not the same document. Normalisation cannot do this for an
       // instance: a subflow defined inline is never in `GET /nodes`, and `defineFlowSet` normalises
@@ -545,6 +650,9 @@ export class Builder implements FlowBuilder {
   /**
    * Splits authored props into palette-declared properties (the palette's own literal defaults
    * filled in) and everything else, which is preserved verbatim.
+   *
+   * Values are *not* converted here: a handle becomes an id at build time, once every entity
+   * exists, so a property may reference a node that is created later in the same callback.
    */
   #splitProps(
     props: Readonly<Record<string, unknown>>,
@@ -555,7 +663,7 @@ export class Builder implements FlowBuilder {
 
     if (type !== null) {
       for (const [name, property] of Object.entries(type.defaults)) {
-        if (Object.hasOwn(props, name)) known[name] = toFlowValue(props[name]);
+        if (Object.hasOwn(props, name)) known[name] = props[name];
         else if (property.value !== undefined && !property.dynamic) known[name] = property.value;
       }
     }
@@ -563,7 +671,7 @@ export class Builder implements FlowBuilder {
     const declared = type === null ? new Set<string>() : new Set(Object.keys(type.defaults));
     for (const [name, value] of Object.entries(props)) {
       if (ENVELOPE_KEYS.has(name) || declared.has(name)) continue;
-      extras[name] = toFlowValue(value);
+      extras[name] = value;
     }
 
     return { known, extras };
@@ -612,12 +720,12 @@ function defaultKey(type: string): string {
   return isSubflowType(type) ? 'instance' : type.replace(/[^A-Za-z0-9]+/g, '_');
 }
 
-function readGeometry(props: Readonly<Record<string, unknown>>): Node['geometry'] {
-  const x = props['x'];
-  const y = props['y'];
+function readGeometry(props: { readonly x?: unknown; readonly y?: unknown; readonly w?: unknown; readonly h?: unknown }): Node['geometry'] {
+  const x = props.x;
+  const y = props.y;
   if (typeof x !== 'number' || typeof y !== 'number') return undefined;
-  const w = props['w'];
-  const h = props['h'];
+  const w = props.w;
+  const h = props.h;
   return { x, y, ...(typeof w === 'number' ? { w } : {}), ...(typeof h === 'number' ? { h } : {}) };
 }
 

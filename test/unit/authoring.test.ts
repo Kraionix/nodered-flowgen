@@ -436,3 +436,110 @@ test('the emitted file reflects the authored flow set', () => {
   assert.equal(inject?.['topic'], 'orders');
   assert.deepEqual(inject?.['wires'], [['reply']]);
 });
+
+test('a value that only looks like a handle stays data, and a real one becomes an id', () => {
+  const flowSet = build(
+    defineFlowSet((f) => {
+      const tab = f.flow('main');
+      const broker = f.config('mqtt-broker', { key: 'broker', port: 1883 });
+      // A property *value* that happens to have `id` and `type` is data, not a reference: the
+      // old conversion turned it into the bare string `"a"`.
+      tab.untyped('inject', { key: 'start', payload: { id: 'a', type: 'b' }, broker });
+      // A forward reference cannot be a handle at all — the variable does not exist yet — so an
+      // imported file's forward reference is written as the id it already has.
+      tab.untyped('link out', { key: 'send', links: ['receive'] });
+      tab.untyped('link in', { key: 'receive' });
+    }),
+  );
+
+  const nodes = flowSet.flows[0]?.nodes ?? [];
+  assert.deepEqual(nodes[0]?.props.known['payload'], { id: 'a', type: 'b' }, 'a payload keeps its shape');
+  assert.equal(nodes[0]?.props.extras['broker'], 'broker', 'a handle still becomes its id');
+  assert.deepEqual(nodes[1]?.props.extras['links'], ['receive'], 'a raw id stays a raw id');
+});
+
+test('a group keeps the box it was given, and gets one computed when it has none', () => {
+  const flowSet = build(
+    defineFlowSet((f) => {
+      const tab = f.flow('main');
+      const imported = tab.group('imported', { name: 'imported', x: 95, y: 355, w: 550, h: 422 });
+      const computed = tab.group('computed', { name: 'computed' });
+      imported.node('inject', { key: 'a', x: 120, y: 400 });
+      computed.node('inject', { key: 'b', x: 400, y: 400 });
+    }),
+  );
+
+  const groups = flowSet.flows[0]?.groups ?? [];
+  assert.deepEqual(groups[0]?.geometry, { x: 95, y: 355, w: 550, h: 422 });
+  assert.notDeepEqual(groups[1]?.geometry, { x: 0, y: 0, w: 0, h: 0 }, 'an unplaced group is boxed by the layout');
+});
+
+test('a subflow body can hold a group, and a subflow carries its meta and port geometry', () => {
+  const flowSet = build(
+    defineFlowSet((f) => {
+      const sub = f.subflow(
+        'scale',
+        {
+          name: 'scale',
+          meta: { 'node-red-dashboard': '3.6.6' },
+          params: { factor: P.num(2) },
+          ports: { in: ['value'], out: ['scaled'], inPosition: { x: 140, y: 200 } },
+        },
+        (s) => {
+          const group = s.group('body', { name: 'body', x: 10, y: 20, w: 300, h: 200 });
+          const work = group.node('function', { key: 'work', func: 'return msg;' });
+          s.in(work);
+          s.out(work, 0);
+        },
+      );
+      const tab = f.flow('main');
+      tab.instance(sub, { key: 'use', env: { factor: 3 } });
+    }),
+  );
+
+  const subflow = flowSet.subflows[0];
+  assert.deepEqual(subflow?.meta, { 'node-red-dashboard': '3.6.6' });
+  assert.deepEqual(subflow?.ports.inPosition, { x: 140, y: 200 });
+  assert.deepEqual(subflow?.groups.map((group) => group.id), ['body']);
+  assert.equal(subflow?.nodes[0]?.g, 'body', 'the node belongs to the group inside the subflow');
+
+  const instance = flowSet.flows[0]?.nodes[0];
+  assert.deepEqual(instance?.env, [{ name: 'factor', type: 'num', value: '3' }]);
+});
+
+test('an instance can carry the whole envelope an imported file had', () => {
+  const flowSet = build(
+    defineFlowSet((f) => {
+      const sub = f.subflow('scale', { name: 'scale' }, () => {});
+      const tab = f.flow('main');
+      tab.instance(sub, {
+        key: 'use',
+        disabled: true,
+        x: 300,
+        y: 120,
+        props: { name: '', info: 'imported instance', l: false },
+      });
+    }),
+  );
+
+  const instance = flowSet.flows[0]?.nodes[0];
+  assert.equal(instance?.disabled, true);
+  assert.deepEqual(instance?.geometry, { x: 300, y: 120 });
+  assert.equal(instance?.props.extras['info'], 'imported instance');
+  assert.equal(instance?.props.extras['l'], false);
+});
+
+test('a config node can be scoped to the container, the way an imported file scopes it', () => {
+  const flowSet = build(
+    defineFlowSet((f) => {
+      const tab = f.flow('main');
+      // The editor's default: a config node dropped on a tab's canvas is global.
+      tab.untypedConfig('mqtt-broker', { key: 'shared', port: 1883 });
+      // What a hand-written or programmatic flow file may say instead.
+      tab.untypedConfig('mqtt-broker', { key: 'scoped', port: 1884 }, { scope: 'container' });
+    }),
+  );
+
+  assert.deepEqual(flowSet.configs.map((config) => config.id), ['shared']);
+  assert.deepEqual(flowSet.flows[0]?.configs.map((config) => config.id), ['scoped']);
+});

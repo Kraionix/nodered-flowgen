@@ -285,8 +285,17 @@ function stronglyConnected(
 /**
  * Group box = bounding box of its members, padded the way the editor pads it. Members without
  * geometry (config nodes) are ignored.
+ *
+ * A group that already has a box keeps it: the builder hands an imported group the box the file
+ * had, and that box came from the editor measuring rendered widgets — recomputing it from the
+ * palette's default node size would move every group in the file. An all-zero box means "not
+ * placed yet" and is computed.
  */
 function boxGroup(group: Group, nodes: readonly Node[], config: LayoutConfig): Group {
+  if (group.geometry.w !== undefined && group.geometry.h !== undefined && group.geometry.w > 0 && group.geometry.h > 0) {
+    return group;
+  }
+
   const members = nodes.filter((node) => node.g === group.id && node.geometry !== undefined);
   if (members.length === 0) return group;
 
