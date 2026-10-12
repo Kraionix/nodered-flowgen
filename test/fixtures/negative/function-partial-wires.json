@@ -1,0 +1,36 @@
+[
+  { "id": "tab1", "type": "tab", "label": "Partial wires", "disabled": false, "info": "" },
+  {
+    "id": "fn1",
+    "type": "function",
+    "z": "tab1",
+    "name": "three outputs, one wired",
+    "func": "return [msg, msg, msg];",
+    "outputs": 3,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 200,
+    "y": 100,
+    "wires": [["dbg1"]]
+  },
+  {
+    "id": "dbg1",
+    "type": "debug",
+    "z": "tab1",
+    "name": "first",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "statusVal": "",
+    "statusType": "auto",
+    "x": 420,
+    "y": 100,
+    "wires": []
+  }
+]

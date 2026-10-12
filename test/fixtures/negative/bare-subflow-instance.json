@@ -1,0 +1,35 @@
+[
+  {
+    "id": "sf1",
+    "type": "subflow",
+    "name": "scale",
+    "info": "Multiplies payload by the `factor` parameter.",
+    "category": "",
+    "in": [{ "x": 100, "y": 100, "wires": [{ "id": "w1" }] }],
+    "out": [{ "x": 300, "y": 100, "wires": [{ "id": "w1", "port": 0 }] }],
+    "env": [{ "name": "factor", "type": "num", "value": "2" }],
+    "meta": {},
+    "color": "#DDAA99"
+  },
+  {
+    "id": "w1",
+    "type": "function",
+    "z": "sf1",
+    "name": "x factor",
+    "func": "msg.payload = msg.payload * env.get(\"factor\");\nreturn msg;",
+    "outputs": 1,
+    "x": 200,
+    "y": 100,
+    "wires": [[]]
+  },
+  { "id": "tab1", "type": "tab", "label": "Bare instance", "disabled": false, "info": "" },
+  {
+    "id": "sfi1",
+    "type": "subflow:sf1",
+    "z": "tab1",
+    "name": "scale x3",
+    "env": [{ "name": "factor", "type": "num", "value": "3" }],
+    "x": 200,
+    "y": 200
+  }
+]

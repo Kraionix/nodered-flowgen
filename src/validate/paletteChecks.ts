@@ -214,9 +214,16 @@ function checkReferences(context: ValidationContext): readonly Problem[] {
   return problems;
 }
 
+/**
+ * A reference property as a list of target ids.
+ *
+ * An empty string is *unset*, not dangling: the editor writes `"broker": ""` for every optional
+ * config reference the author has not selected, and such flows are everywhere. Reporting them as
+ * `palette/ref-missing` would make the validator cry wolf on ordinary exports.
+ */
 function toIdList(value: unknown): readonly string[] {
-  if (typeof value === 'string') return [value];
-  if (Array.isArray(value)) return value.filter((entry): entry is string => typeof entry === 'string');
+  if (typeof value === 'string') return value === '' ? [] : [value];
+  if (Array.isArray(value)) return value.filter((entry): entry is string => typeof entry === 'string' && entry !== '');
   return [];
 }
 

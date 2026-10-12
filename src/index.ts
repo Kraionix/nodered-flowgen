@@ -234,6 +234,7 @@ export {
 
 export {
   liveHttpSource,
+  snapshotFromNodeList,
   type LiveHttpSourceOptions,
 } from './palette/sources/liveHttp.ts';
 

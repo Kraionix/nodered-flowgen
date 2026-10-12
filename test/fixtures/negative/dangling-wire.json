@@ -1,0 +1,18 @@
+[
+  { "id": "tab1", "type": "tab", "label": "Dangling wire", "disabled": false, "info": "" },
+  {
+    "id": "in1",
+    "type": "inject",
+    "z": "tab1",
+    "name": "removed target left a wire behind",
+    "props": [{ "p": "payload" }],
+    "repeat": "",
+    "once": false,
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 200,
+    "y": 100,
+    "wires": [["node_that_was_deleted"]]
+  }
+]

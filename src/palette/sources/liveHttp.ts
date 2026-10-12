@@ -14,6 +14,7 @@
  * palette" claim being off by one request.
  */
 
+import type { PaletteProvenance } from '../model.ts';
 import { createPaletteSnapshot, type PaletteSnapshot } from '../snapshot.ts';
 import { extractFromMarkedHtml, parseNodeSets } from '../extract/attribute.ts';
 
@@ -49,35 +50,11 @@ export function liveHttpSource(options: LiveHttpSourceOptions): PaletteSource {
         request(`${base}/nodes`, 'text/html'),
       ]);
 
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(nodeListJson);
-      } catch (cause) {
-        throw new PaletteSourceError('invalid-response', `${base}/nodes did not return JSON`, {
-          details: [cause instanceof Error ? cause.message : String(cause)],
-        });
-      }
-
-      const { nodeSets, issues } = parseNodeSets(parsed);
-      if (nodeSets.length === 0) {
-        throw new PaletteSourceError('invalid-response', `${base}/nodes reported no node sets`, {
-          details: issues.map((issue) => `${issue.path}: ${issue.message}`),
-        });
-      }
-
-      const extraction = extractFromMarkedHtml(html, nodeSets);
-      if (extraction.types.length === 0) {
-        throw new PaletteSourceError(
-          'invalid-response',
-          `${base}/nodes returned no editor definitions; is this a Node-RED editor endpoint?`,
-        );
-      }
-
-      return createPaletteSnapshot({
-        nodeRedVersion: coreVersion(nodeSets.map((nodeSet) => ({ module: nodeSet.module, version: nodeSet.version }))),
-        nodeSets: extraction.types.length > 0 ? nodeSets : [],
-        types: extraction.types,
-        provenance: { kind: 'live', url: base, userDir: null, nodeModulesDirs: null },
+      return snapshotFromNodeList(nodeListJson, html, {
+        kind: 'live',
+        url: base,
+        userDir: null,
+        nodeModulesDirs: null,
       });
     },
   };
@@ -108,6 +85,51 @@ export function liveHttpSource(options: LiveHttpSourceOptions): PaletteSource {
     }
     return response.text();
   }
+}
+
+/**
+ * Assembles a snapshot from the two `GET /nodes` representations.
+ *
+ * Split out from the source on purpose: the committed palette fixtures in
+ * `test/fixtures/palettes/` are exactly this pair of payloads, so the extraction the tests
+ * verify offline is the same code path a live pull runs — not a re-implementation of it.
+ */
+export function snapshotFromNodeList(
+  nodeListJson: string,
+  html: string,
+  provenance: PaletteProvenance,
+  label = 'GET /nodes',
+): PaletteSnapshot {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(nodeListJson);
+  } catch (cause) {
+    throw new PaletteSourceError('invalid-response', `${label} did not return JSON`, {
+      details: [cause instanceof Error ? cause.message : String(cause)],
+    });
+  }
+
+  const { nodeSets, issues } = parseNodeSets(parsed);
+  if (nodeSets.length === 0) {
+    throw new PaletteSourceError('invalid-response', `${label} reported no node sets`, {
+      details: issues.map((issue) => `${issue.path}: ${issue.message}`),
+    });
+  }
+
+  const extraction = extractFromMarkedHtml(html, nodeSets);
+  if (extraction.types.length === 0) {
+    throw new PaletteSourceError(
+      'invalid-response',
+      `${label} returned no editor definitions; is this a Node-RED editor endpoint?`,
+    );
+  }
+
+  return createPaletteSnapshot({
+    nodeRedVersion: coreVersion(nodeSets.map((nodeSet) => ({ module: nodeSet.module, version: nodeSet.version }))),
+    nodeSets,
+    types: extraction.types,
+    provenance,
+  });
 }
 
 /**

@@ -1,0 +1,56 @@
+[
+  {
+    "id": "tls1",
+    "type": "tls-config",
+    "name": "shared tls",
+    "cert": "",
+    "key": "",
+    "ca": "",
+    "certname": "",
+    "keyname": "",
+    "caname": "",
+    "servername": "",
+    "verifyservercert": true
+  },
+  {
+    "id": "broker1",
+    "type": "mqtt-broker",
+    "name": "shared broker",
+    "broker": "localhost",
+    "port": "1883",
+    "clientid": "",
+    "usetls": true,
+    "tls": "tls1",
+    "protocolVersion": "4",
+    "keepalive": "60",
+    "cleansession": true,
+    "autoConnect": false
+  },
+  { "id": "tab1", "type": "tab", "label": "Config scope", "disabled": false, "info": "" },
+  {
+    "id": "mq1",
+    "type": "mqtt out",
+    "z": "tab1",
+    "name": "publish",
+    "topic": "flowgen/out",
+    "qos": "",
+    "retain": "",
+    "broker": "broker1",
+    "x": 300,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "mq2",
+    "type": "mqtt out",
+    "z": "tab1",
+    "name": "nobody selected a broker",
+    "topic": "flowgen/other",
+    "qos": "",
+    "retain": "",
+    "broker": "",
+    "x": 300,
+    "y": 200,
+    "wires": []
+  }
+]

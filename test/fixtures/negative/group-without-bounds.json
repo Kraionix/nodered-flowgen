@@ -1,0 +1,20 @@
+[
+  { "id": "tab1", "type": "tab", "label": "Group without bounds", "disabled": false, "info": "" },
+  { "id": "grp1", "type": "group", "z": "tab1", "name": "classifier", "style": { "stroke": "#999999" }, "nodes": ["sw1"], "x": 0, "y": 0 },
+  {
+    "id": "sw1",
+    "type": "switch",
+    "z": "tab1",
+    "name": "classify",
+    "property": "payload",
+    "propertyType": "msg",
+    "rules": [{ "t": "eq", "v": "7", "vt": "num" }],
+    "checkall": "true",
+    "repair": false,
+    "outputs": 1,
+    "g": "grp1",
+    "x": 300,
+    "y": 120,
+    "wires": [[]]
+  }
+]

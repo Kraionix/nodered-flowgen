@@ -1,0 +1,29 @@
+[
+  { "id": "tab1", "type": "tab", "label": "No coordinates", "disabled": false, "info": "" },
+  {
+    "id": "in1",
+    "type": "inject",
+    "z": "tab1",
+    "name": "added without a column",
+    "props": [{ "p": "payload" }],
+    "repeat": "",
+    "crontab": "",
+    "once": false,
+    "onceDelay": 0.1,
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "wires": [["dbg1"]]
+  },
+  {
+    "id": "dbg1",
+    "type": "debug",
+    "z": "tab1",
+    "name": "out",
+    "active": true,
+    "complete": "payload",
+    "x": 400,
+    "y": 100,
+    "wires": []
+  }
+]
