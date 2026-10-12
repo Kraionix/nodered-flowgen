@@ -62,7 +62,13 @@ export function defineFlowSet(build: (f: FlowBuilder) => void): FlowSetDefinitio
       const laidOut =
         options.layout === false
           ? { flowSet: raw, problems: [] as readonly Problem[] }
-          : layoutFlowSetWithDiagnostics(raw, options.layout === true ? {} : (options.layout ?? {}));
+          : layoutFlowSetWithDiagnostics(raw, {
+              ...(typeof options.layout === 'object' ? options.layout : {}),
+              // The palette is what makes `link` references visible to the layout: a `link out`
+              // node has no wires at all, so without it a link-connected flow piles up in one
+              // column. Geometry stays advisory either way.
+              palette: options.palette,
+            });
 
       return {
         flowSet: normalizeFlowSet(laidOut.flowSet, { palette: options.palette }),

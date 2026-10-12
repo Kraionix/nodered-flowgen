@@ -23,6 +23,8 @@
  */
 
 import type { FlowSet, Group, Node } from '../model/entities.ts';
+import { outgoingTargets } from '../model/references.ts';
+import type { PaletteType } from '../palette/model.ts';
 import type { Problem } from '../diagnostics/index.ts';
 
 export interface LayoutOptions {
@@ -35,6 +37,13 @@ export interface LayoutOptions {
   readonly groupHeader?: number;
   readonly defaultWidth?: number;
   readonly defaultHeight?: number;
+  /**
+   * The node palette, when the caller has one. It is what makes `link` references visible as
+   * edges: `link out` has no wires at all, so without a palette a link-connected flow looks like a
+   * pile of roots and lays out in one column. Geometry is advisory either way — passing the
+   * palette only makes the picture match the flow the reader sees.
+   */
+  readonly palette?: Readonly<Record<string, PaletteType>> | undefined;
 }
 
 export interface LayoutResult {
@@ -43,7 +52,9 @@ export interface LayoutResult {
   readonly problems: readonly Problem[];
 }
 
-const DEFAULTS: Required<LayoutOptions> = {
+type LayoutConfig = Required<Omit<LayoutOptions, 'palette'>>;
+
+const DEFAULTS: LayoutConfig = {
   originX: 120,
   originY: 80,
   columnWidth: 190,
@@ -53,6 +64,9 @@ const DEFAULTS: Required<LayoutOptions> = {
   defaultWidth: 200,
   defaultHeight: 100,
 };
+
+/** How one node reaches another: wires plus palette-declared references (see `model/references`). */
+type EdgesOf = (node: Node) => readonly string[];
 
 interface Container {
   readonly id: string;
@@ -67,11 +81,14 @@ export function layoutFlowSet(flowSet: FlowSet, options: LayoutOptions = {}): Fl
 
 /** `layoutFlowSet`, plus the `layout/cycle` advice the layout pass is the first to know about. */
 export function layoutFlowSetWithDiagnostics(flowSet: FlowSet, options: LayoutOptions = {}): LayoutResult {
-  const config = { ...DEFAULTS, ...options };
+  const { palette, ...rest } = options;
+  const config: LayoutConfig = { ...DEFAULTS, ...rest };
   const problems: Problem[] = [];
+  const edgesOf: EdgesOf =
+    palette === undefined ? (node) => node.wires.flat() : (node) => outgoingTargets(node, palette);
 
   const container = <T extends Container>(value: T): T => {
-    const nodes = placeNodes(value.nodes, config, problems);
+    const nodes = placeNodes(value.nodes, config, problems, edgesOf);
     return { ...value, nodes, groups: value.groups.map((group) => boxGroup(group, nodes, config)) };
   };
 
@@ -80,7 +97,7 @@ export function layoutFlowSetWithDiagnostics(flowSet: FlowSet, options: LayoutOp
       ...flowSet,
       subflows: flowSet.subflows.map(container),
       flows: flowSet.flows.map(container),
-      loose: placeNodes(flowSet.loose, config, problems),
+      loose: placeNodes(flowSet.loose, config, problems, edgesOf),
     },
     problems,
   };
@@ -91,8 +108,13 @@ export function layoutFlowSetWithDiagnostics(flowSet: FlowSet, options: LayoutOp
  * order inside that column. A node that already has coordinates keeps them — the author may have
  * placed it on purpose, and layout must not fight a human.
  */
-function placeNodes(nodes: readonly Node[], config: Required<LayoutOptions>, problems: Problem[]): readonly Node[] {
-  const { depth, cycles } = wireDepths(nodes);
+function placeNodes(
+  nodes: readonly Node[],
+  config: LayoutConfig,
+  problems: Problem[],
+  edgesOf: EdgesOf,
+): readonly Node[] {
+  const { depth, cycles } = wireDepths(nodes, edgesOf);
 
   for (const cycle of cycles) {
     problems.push({
@@ -134,16 +156,14 @@ interface Depths {
  * Edges are restricted to the container: a wire that leaves the tab is not this tab's business,
  * and counting it as an incoming edge would silently demote a node from its own root.
  */
-function wireDepths(nodes: readonly Node[]): Depths {
+function wireDepths(nodes: readonly Node[], edgesOf: EdgesOf): Depths {
   const scope = new Set(nodes.map((node) => node.id));
   const successors = new Map<string, readonly string[]>();
 
   for (const node of nodes) {
     const targets = new Set<string>();
-    for (const wire of node.wires) {
-      for (const target of wire) {
-        if (scope.has(target)) targets.add(target);
-      }
+    for (const target of edgesOf(node)) {
+      if (scope.has(target)) targets.add(target);
     }
     successors.set(node.id, [...targets]);
   }
@@ -266,7 +286,7 @@ function stronglyConnected(
  * Group box = bounding box of its members, padded the way the editor pads it. Members without
  * geometry (config nodes) are ignored.
  */
-function boxGroup(group: Group, nodes: readonly Node[], config: Required<LayoutOptions>): Group {
+function boxGroup(group: Group, nodes: readonly Node[], config: LayoutConfig): Group {
   const members = nodes.filter((node) => node.g === group.id && node.geometry !== undefined);
   if (members.length === 0) return group;
 

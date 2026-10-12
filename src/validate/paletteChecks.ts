@@ -9,6 +9,7 @@
 
 import { effectiveInputCount, effectiveOutputCount } from '../model/normalize.ts';
 import { eachConfig, eachNode, type FlowSet, type NodeProps } from '../model/entities.ts';
+import { referenceTargets } from '../model/references.ts';
 import { isSubflowType, subflowDefinitionId, type PaletteType, type RefSpec } from '../palette/model.ts';
 
 import type { Problem } from '../diagnostics/index.ts';
@@ -175,56 +176,44 @@ function checkReferences(context: ValidationContext): readonly Problem[] {
   for (const node of eachNode(context.flowSet)) typesById.set(node.id, node.type);
   for (const config of eachConfig(context.flowSet)) typesById.set(config.id, config.type);
 
-  for (const node of eachNode(context.flowSet)) {
-    const type = context.palette[node.type] ?? null;
-    if (type === null) continue;
+  // Nodes *and* config nodes. A config node's references dangle exactly the same way, and in
+  // node-red-dashboard 3.x the interesting ones are all configs: `ui_base`, `ui_tab`, `ui_group`
+  // and `ui_link`. `ui_group.tab → ui_tab` is the reference that breaks when somebody deletes a
+  // dashboard page, and it used to be the one reference nothing checked.
+  for (const entity of [...eachNode(context.flowSet), ...eachConfig(context.flowSet)]) {
+    const type = context.palette[entity.type];
+    if (type === undefined) continue;
 
-    for (const [name, spec] of Object.entries(type.refs)) {
-      const authored = Object.hasOwn(node.props.known, name) ? node.props.known[name] : node.props.extras[name];
-      if (authored === undefined || authored === null) continue;
-      const ids = toIdList(authored);
+    for (const reference of referenceTargets(entity, context.palette)) {
+      const spec = type.refs[reference.property];
+      if (spec === undefined) continue;
 
-      for (const id of ids) {
-        const targetType = typesById.get(id);
-        if (targetType === undefined) {
-          problems.push({
-            code: 'palette/ref-missing',
-            severity: 'error',
-            entity: node.id,
-            path: `props.${name}`,
-            message: `reference "${name}" points at "${id}", which is not in this flow set`,
-            hint: 'wire the reference to a node you define, or remove it',
-          });
-          continue;
-        }
-        if (!accepts(spec, targetType)) {
-          problems.push({
-            code: 'palette/ref-wrong-type',
-            severity: 'error',
-            entity: node.id,
-            path: `props.${name}`,
-            message: `reference "${name}" points at a "${targetType}", but ${describeTargets(spec)} is expected`,
-            hint: 'point the reference at the right kind of node',
-          });
-        }
+      const targetType = typesById.get(reference.id);
+      if (targetType === undefined) {
+        problems.push({
+          code: 'palette/ref-missing',
+          severity: 'error',
+          entity: entity.id,
+          path: `props.${reference.property}`,
+          message: `reference "${reference.property}" points at "${reference.id}", which is not in this flow set`,
+          hint: 'wire the reference to a node you define, or remove it',
+        });
+        continue;
+      }
+      if (!accepts(spec, targetType)) {
+        problems.push({
+          code: 'palette/ref-wrong-type',
+          severity: 'error',
+          entity: entity.id,
+          path: `props.${reference.property}`,
+          message: `reference "${reference.property}" points at a "${targetType}", but ${describeTargets(spec)} is expected`,
+          hint: 'point the reference at the right kind of node',
+        });
       }
     }
   }
 
   return problems;
-}
-
-/**
- * A reference property as a list of target ids.
- *
- * An empty string is *unset*, not dangling: the editor writes `"broker": ""` for every optional
- * config reference the author has not selected, and such flows are everywhere. Reporting them as
- * `palette/ref-missing` would make the validator cry wolf on ordinary exports.
- */
-function toIdList(value: unknown): readonly string[] {
-  if (typeof value === 'string') return value === '' ? [] : [value];
-  if (Array.isArray(value)) return value.filter((entry): entry is string => typeof entry === 'string' && entry !== '');
-  return [];
 }
 
 function accepts(spec: RefSpec, typeId: string): boolean {

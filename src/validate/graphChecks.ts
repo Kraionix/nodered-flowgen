@@ -11,6 +11,7 @@
 
 import { allIds, eachConfig, eachGroup, eachNode, type FlowSet } from '../model/entities.ts';
 import { effectiveOutputCount } from '../model/normalize.ts';
+import { inboundReferences, outgoingTargets } from '../model/references.ts';
 import { isSubflowType, subflowDefinitionId } from '../palette/model.ts';
 
 import type { Problem } from '../diagnostics/index.ts';
@@ -270,28 +271,22 @@ function checkSubflowRecursion(flowSet: FlowSet): readonly Problem[] {
 }
 
 /**
- * Completely isolated nodes — no incoming and no outgoing wires anywhere in the flow set.
+ * Completely isolated nodes — nothing points at them and they point at nothing.
+ *
  * Reported as info only: a node with a trigger of its own (an `inject`, a `link out`) is
- * perfectly fine unwired, but one with no wires at all is usually a leftover.
+ * perfectly fine unwired, but one with no wires and no references at all is usually a leftover.
+ *
+ * "Points at" includes palette-declared references, which is what makes a `link out`/`link in`
+ * pair connected: `link out` declares `outputs: 0` and carries its edge in a `links` reference, so
+ * a wire-only view reported both halves of every link pair as isolated.
  */
 function checkIsolatedNodes(context: ValidationContext): readonly Problem[] {
   const problems: Problem[] = [];
-  const referenced = new Set<string>();
+  const inbound = inboundReferences(context.flowSet, context.palette);
 
   for (const node of eachNode(context.flowSet)) {
-    for (const wire of node.wires) {
-      for (const target of wire) referenced.add(target);
-    }
-  }
-  for (const subflow of context.flowSet.subflows) {
-    for (const link of subflow.ports.status) referenced.add(link.node);
-    for (const links of subflow.ports.in) for (const link of links) referenced.add(link.node);
-    for (const links of subflow.ports.out) for (const link of links) referenced.add(link.node);
-  }
-
-  for (const node of eachNode(context.flowSet)) {
-    const hasOutgoing = node.wires.some((wire) => wire.length > 0);
-    if (hasOutgoing || referenced.has(node.id)) continue;
+    const hasOutgoing = outgoingTargets(node, context.palette).length > 0;
+    if (hasOutgoing || (inbound.get(node.id)?.length ?? 0) > 0) continue;
     const type = context.palette[node.type];
     if (type !== undefined && type.isConfig) continue;
     problems.push({

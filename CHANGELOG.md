@@ -38,6 +38,11 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
 
 ### Changed
 
+* **One definition of "what points at what".** `src/model/references.ts` holds
+  `referenceTargets`/`outgoingTargets`/`inboundReferences`, so the validator, the layout and (next)
+  the diff cannot disagree about what an edge is. The layout only sees `link` edges when it is given
+  a palette — `layoutFlowSet(flowSet, { palette })` — which `defineFlowSet` now passes; geometry
+  stays advisory either way.
 * **The diagnostics contract moved to `src/diagnostics/`.** It used to live in `validate/`, and
   `model/normalize.ts` imported `Problem` from there while every file in `validate/` imported
   `model/entities.ts` — a directory cycle that made the README's "dependencies point inward only"
@@ -48,6 +53,19 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
 
 ### Fixed
 
+* **A config node's references are validated.** The reference check walked nodes only, and in
+  node-red-dashboard 3.x every interesting reference *is* a config node: `ui_base`, `ui_tab`,
+  `ui_group` and `ui_link` are all `isConfig: true`. `ui_group.tab → ui_tab` is exactly the
+  reference that dangles when somebody deletes a dashboard page, and it was the one reference
+  nothing checked.
+* **A `link out` / `link in` pair counts as connected.** `link out` declares `outputs: 0` and keeps
+  its edge in a `links` reference, so `graph/unreachable` reported both halves of every link pair as
+  isolated — and the layout, which also only counted wires, put link-connected flows in a single
+  column. `src/model/references.ts` is now the one definition of "what points at what"
+  (`referenceTargets`, `outgoingTargets`, `inboundReferences`), used by the reference check, the
+  connectivity check and the layout. A reference to a config node counts as a connection too, so a
+  dashboard widget hanging off a group is no longer reported as a leftover; the acceptance example
+  now validates with zero diagnostics of any severity.
 * **`flowgen --version` works.** It exited `2`, "unknown command": there was no version option at
   all. The version is now read from the manifest next to the module (`src/cli/` and `dist/cli/` are
   both two levels below the package root), and `--version` is a global option, so

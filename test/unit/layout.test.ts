@@ -15,6 +15,7 @@ import test from 'node:test';
 
 import { layoutFlowSet, layoutFlowSetWithDiagnostics } from '../../src/authoring/layout.ts';
 import type { FlowSet, Node, NodeProps, SubflowDef } from '../../src/model/entities.ts';
+import { paletteProperty, paletteType } from '../../src/palette/model.ts';
 
 function props(): NodeProps {
   return { known: {}, extras: {} };
@@ -184,6 +185,54 @@ test('a node the author placed keeps its coordinates, and still counts for the g
 
   assert.deepEqual(placed.flows[0]?.nodes[0]?.geometry, { x: 999, y: 999 });
   assert.equal(xOf(placed, 'b'), 310, 'a placed node still contributes its depth to the graph');
+});
+
+test('a link-connected flow spreads out when the layout is given the palette', () => {
+  // `link out` has no wires at all: it declares `outputs: 0` and keeps its edge in a `links`
+  // reference. Without the palette the layout cannot see the edge, and such a flow piles up in one
+  // column — which is what it used to do, for every link-using flow.
+  const palette = {
+    'link out': paletteType('link out', {
+      module: 'node-red',
+      nodeSet: 'node-red/link',
+      version: '5.0.7',
+      inputs: 1,
+      outputs: 0,
+      defaults: { name: paletteProperty({ value: '' }), links: paletteProperty({ type: 'link in[]' }) },
+    }),
+    'link in': paletteType('link in', {
+      module: 'node-red',
+      nodeSet: 'node-red/link',
+      version: '5.0.7',
+      inputs: 0,
+      outputs: 1,
+      defaults: { name: paletteProperty({ value: '' }), links: paletteProperty({ type: 'link out[]' }) },
+    }),
+  };
+
+  // A link pair references *both* ways (`link in` declares `links → link out[]` too, which is how
+  // the editor draws the connection from either end), so the pair is one strongly connected
+  // component and shares a column. That is the visually sane answer: the halves are peers, and what
+  // matters is that the flow around them is laid out in order instead of piled up.
+  const linked = flowSet([
+    node('tick', { type: 'inject', wires: [['out_1']] }),
+    node('out_1', { type: 'link out', props: { known: { links: ['in_1'] }, extras: {} } }),
+    node('in_1', { type: 'link in', props: { known: { links: ['out_1'] }, extras: {} }, wires: [['sink']] }),
+    node('sink', { type: 'debug' }),
+  ]);
+
+  const columns = (set: FlowSet): (number | undefined)[] => ['tick', 'out_1', 'in_1', 'sink'].map((id) => xOf(set, id));
+
+  assert.deepEqual(
+    columns(layoutFlowSet(linked, { palette })),
+    [120, 310, 310, 500],
+    'the link reference is an edge: the pair sits in the column after its trigger, and the sink follows',
+  );
+  assert.deepEqual(
+    columns(layoutFlowSet(linked)),
+    [120, 310, 120, 310],
+    'without a palette the link edge is invisible, so `in_1` looks like a second root and the sink lands in the column of the node that feeds it',
+  );
 });
 
 test('a long chain is laid out without recursing per node', () => {
