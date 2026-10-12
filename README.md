@@ -32,7 +32,9 @@ only at `npm run build`, which `npm test` runs first and `npm pack` runs through
 ## Quick start
 
 ```sh
-# not on the npm registry yet — install it from this repository
+# not on the npm registry yet — install it from this repository.
+# The package has no committed build output, so npm runs its `prepare` script
+# (`tsc` → `dist`) on the way in; npm ≥ 11 may ask you to approve that script first.
 npm install github:Kraionix/nodered-flowgen
 npx flowgen init --url http://127.0.0.1:1880     # flowgen.config.ts + .gitignore entries
 npx flowgen palette pull                          # instance → palettes/local.json
