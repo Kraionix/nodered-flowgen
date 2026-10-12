@@ -55,6 +55,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
+    "prepare": "npm run build",
     "test": "node --test \"test/unit/*.test.ts\" \"test/integration/*.spec.ts\"",
     "pretest": "npm run build",
     "test:unit": "node --test \"test/unit/*.test.ts\"",
