@@ -2,26 +2,30 @@
  * E3, enforced: the generated palette types must type-check a correct flow description and
  * **reject** a wrong one with the diagnostics we expect.
  *
- * The augmentations are regenerated here from the pinned installation (not committed), so the
- * fixture can never drift from the generator. Both projects are compiled with the real
- * compiler; TypeScript 7 ships no programmatic API, so the diagnostics are parsed from its
- * structured, line-oriented output (`--pretty false`) rather than grepped as prose.
+ * The augmentations under `test/types/palettes/local.d/` are committed, because the repository's
+ * own `tsc --noEmit` needs them: without them a fresh clone reports twenty-odd errors in `src/`,
+ * the example and the tests. This spec regenerates them from the pinned installation and compares
+ * byte for byte, so a committed file that has drifted from its generator — or from a new Node-RED
+ * version — fails here with the file and the first difference, instead of quietly type-checking
+ * the project against a palette that no longer exists.
+ *
+ * Both projects are compiled with the real compiler; TypeScript 7 ships no programmatic API, so
+ * the diagnostics are parsed from its structured, line-oriented output (`--pretty false`) rather
+ * than grepped as prose.
  */
 
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-import { emitTypes } from '../../src/palette/codegen/emitTypes.ts';
-import { filesystemSource } from '../../src/palette/sources/filesystem.ts';
+import { generateLocalTypes, LOCAL_TYPES_DIRECTORY, pinnedPalette, REPO_ROOT } from '../types/generate.ts';
 
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TSC = path.join(REPO_ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
 const TYPES_DIR = path.join(REPO_ROOT, 'test', 'types');
-const GENERATED_DIR = path.join(TYPES_DIR, 'palettes');
+const COMMITTED_DIR = path.join(REPO_ROOT, LOCAL_TYPES_DIRECTORY);
 
 interface Diagnostic {
   readonly file: string;
@@ -77,22 +81,45 @@ function parseDiagnostics(output: string): readonly Diagnostic[] {
   return diagnostics;
 }
 
-test('generate the palette augmentations from the pinned installation', async () => {
-  const palette = await filesystemSource({
-    coreNodesDir: path.join(REPO_ROOT, 'node_modules', '@node-red', 'nodes'),
-    userDir: REPO_ROOT,
-  }).load();
+test('the committed augmentations are exactly what the pinned installation generates', async () => {
+  const scratch = await mkdtemp(path.join(os.tmpdir(), 'flowgen-types-'));
+  try {
+    const files = await generateLocalTypes(path.join(scratch, 'local.d'));
+    const palette = await pinnedPalette();
+    assert.ok(files.length >= 3, 'core, dashboard and the index');
+    assert.equal(
+      files.reduce((total, file) => total + file.types.length, 0),
+      Object.keys(palette.types).length,
+      'every type of the pinned installation is covered exactly once',
+    );
 
-  await rm(GENERATED_DIR, { recursive: true, force: true });
-  const files = emitTypes(palette, { directory: 'test/types/palettes/local.d' });
-  for (const file of files) {
-    const full = path.join(REPO_ROOT, file.path);
-    await mkdir(path.dirname(full), { recursive: true });
-    await writeFile(full, file.content, 'utf8');
+    const written: string[] = [];
+    for (const file of files) {
+      const name = path.basename(file.path);
+      written.push(name);
+      await mkdir(path.dirname(path.join(scratch, 'local.d', name)), { recursive: true });
+      await writeFile(path.join(scratch, 'local.d', name), file.content, 'utf8');
+
+      const committed = await readFile(path.join(COMMITTED_DIR, name), 'utf8').catch(() => null);
+      assert.notEqual(committed, null, `${LOCAL_TYPES_DIRECTORY}/${name} is not committed; run \`npm run types:regen\``);
+      assert.equal(
+        committed,
+        file.content,
+        `${LOCAL_TYPES_DIRECTORY}/${name} has drifted from the generator; run \`npm run types:regen\``,
+      );
+    }
+
+    // A file the generator no longer produces is stale by definition: a renamed node set or a
+    // module that was uninstalled would otherwise leave a phantom augmentation behind.
+    const onDisk = await readdir(COMMITTED_DIR);
+    assert.deepEqual(
+      [...onDisk].sort(),
+      [...written].sort(),
+      `the committed directory holds files the generator does not produce; run \`npm run types:regen\``,
+    );
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
   }
-
-  assert.ok(files.length >= 3, 'core, dashboard and the index');
-  assert.equal(files.reduce((total, file) => total + file.types.length, 0), Object.keys(palette.types).length);
 });
 
 test('the positive fixture compiles with no diagnostics', async () => {

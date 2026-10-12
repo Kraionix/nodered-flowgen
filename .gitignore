@@ -4,4 +4,5 @@ dist/
 *.receipt.json
 coverage/
 *.tgz
-test/types/palettes/
+# test/types/palettes/ is committed: the repository type-checks itself against these
+# augmentations, and types.spec.ts fails when they drift from the generator.

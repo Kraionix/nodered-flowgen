@@ -2,8 +2,10 @@
  * Compile-time fixture: every line here must type-check.
  *
  * The palette augmentations in `palettes/local.d/` are generated from the pinned Node-RED
- * installation by `test/integration/types.spec.ts`; this file asserts that the generated
- * surface is usable — references, optionality of defaults, and the deliberate escape hatches.
+ * installation and **committed**, because the repository's own `tsc --noEmit` needs them; this
+ * file asserts that the generated surface is usable — references, optionality of defaults, and the
+ * deliberate escape hatches. `types.spec.ts` regenerates them into a scratch directory and fails
+ * if they have drifted, so `npm run types:regen` is the only way this directory may change.
  */
 
 import type { EnvValue, NodeRef, PropsFor, Ref } from '@kraionix/nodered-flowgen';

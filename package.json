@@ -47,7 +47,8 @@
     "test:unit": "node --test \"test/unit/*.test.ts\"",
     "test:integration": "node --test \"test/integration/*.spec.ts\"",
     "pretest:integration": "npm run build",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "types:regen": "node test/types/regen.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
