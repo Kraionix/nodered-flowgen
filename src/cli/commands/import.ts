@@ -17,8 +17,8 @@
  * The ids are the part to be careful with. They go to the project's lockfile — never over an entry
  * that already means something else, which is reported and skipped rather than taken — so that
  * `flowgen plan` against the instance the flow came from shows nothing at all. Importing claims no
- * ownership: that is `--adopt`'s job, and a tool that silently declared a stranger's tabs its own
- * would be one nobody could point at a production instance.
+ * ownership: that is `plan`/`apply --adopt`'s job, and a tool that silently declared a stranger's
+ * tabs its own would be one nobody could point at a production instance.
  */
 
 import { readFile } from 'node:fs/promises';

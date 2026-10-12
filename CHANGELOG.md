@@ -53,6 +53,28 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
 * **`materialiseDefaults`** — fills palette defaults that are declared literals, which is what makes
   a rebuild comparable with a hand-written flow file that never contained them. A computed default
   (`switch.outputs`) is never invented.
+* **`flowgen diff`** — two flow sets compared semantically: `--from`/`--to`, each a file,
+  `@target:<name>`, `@receipt:<file>` or `@last`. Both sides go through the same pipeline (parse,
+  normalise, fill declared defaults) and the same emitter, so reordered keys, omitted defaults and
+  a missing `wires` array are not differences; geometry is ignored unless `--geometry` is passed.
+  A removal names the surviving entities still pointing at it, from the same reference walk the
+  validator and the layout use. `0` as a report, `1` with `--check`.
+* **Adoption (`--adopt <id>`)** — take ownership of a container that already exists on the target.
+  It is the other half of `import`: without it an id collision could only be answered with
+  `--reassign` (a second copy) or by editing the lockfile by hand. Adoption plans the container like
+  one of ours, so sources that already match the instance are a deploy with no changes, and the
+  ownership is recorded even then. `plan/unowned-target` carries the hint; `plan/adopt-unused`
+  warns when the named container is not there; adopting what is already ours is silent.
+* **`--all-targets`** on `plan` and `apply`: every configured target in name order, each with its
+  own outcome, receipt and lockfile update. The exit code is the highest of the run, so a failure is
+  never hidden behind a success, and nothing aborts early. A target marked `readOnly` is skipped
+  rather than failing the fan-out.
+* **A second example**, `examples/dashboard/`: two dashboard pages with an explicit `order`, a
+  `ui_template` whose multi-line body has to survive byte for byte, `ui_base` theme and site, an
+  endpoint the acceptance run probes, and two targets — one of them deliberately unresolvable, so
+  the fan-out is exercised by CI rather than by hand. `ui_base.site` and a `key` on a dashboard
+  widget are new (`WidgetPropsFor` no longer hides it); without a key a widget is named after its
+  type.
 * **A tiered public surface.** One entry point, four tiers — authoring, palette, diagnostics,
   testing — documented in the README and enforced from a consumer's position: one compile fixture
   per tier under `test/types/tiers/`, compiled again against the packed tarball by
@@ -109,6 +131,13 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
   the module list) and an id that an editor export may have chosen, so `FlowSet.manifest = { id, env }`
   with one writer (`emitGlobalConfig`) replaced a `ConfigNode` that lost its `env` and could be
   emitted twice.
+* **`--all-targets` renamed the exit-code meaning of `1` in words, not in number.** The code was
+  already "validation problems"; it is now also what `diff --check` returns, so the description
+  reads "the check said no (validation problems, or --check found a difference)". One code for "a
+  check failed" beats a sixth code that CI would have to learn.
+* **Adoption is per target, and so is ownership.** The lockfile keeps a separate owned list per
+  target name, which `--all-targets` makes visible: the same tab can be yours on `local` and still
+  somebody else's on `staging` until you `--adopt` it there too.
 * **`PaletteParameter.ui` is optional.** The snapshot format omits it when the editor declared none,
   so requiring it made a hand-written overlay's parameter list uncompilable.
 
@@ -199,6 +228,20 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
   `--token-env` and a profile's `tokenEnv` were ignored and a live check against an instance with
   `adminAuth` silently degraded to a skip — which the new `deploy/missing-types` made visible.
 * **`flowgen import --from` resolves against the project directory**, not `process.cwd()`.
+* **A plan with errors is refused instead of silently deployed.** `plan` computed
+  `plan/id-collision` and then reported it nowhere, so a container the sources defined but the
+  instance already held printed "no changes" and exited `0` — and `apply` wrote a payload the
+  sources had not asked for, minus the tab the user cared about. The plan's problems are now the
+  command's diagnostics, `applyDeployment` refuses to write at all when the plan has errors (before
+  the dry-run exit, so a review sees it too), and the report says `plan refused: 1 error(s) must be
+  fixed before apply`. Two tests in `test/integration/deploy.spec.ts` were passing *because* of the
+  silent behaviour: they deployed twice with no record of owning the config nodes the first run
+  created, which is exactly the collision the check exists to catch.
+* **`--all-targets` no longer loses the first target's ownership.** The lockfile was read once at
+  startup and written per target, so the second target's write dropped the first one's containers.
+* **`plan/id-collision` split in two**: `plan/unowned-target` for a *container* — the situation
+  `--adopt` answers, and the hint says so — and `plan/id-collision` for a config node or a loose
+  node whose id is already taken, which only a rename in the sources can fix.
 
 ### Notes
 
@@ -211,6 +254,11 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
   shipped because the CLI imports it; it is not in `exports` and is not part of the contract.
 * A programmatic `plan`/`apply` is deliberately not public: `flowgen plan --json` and
   `flowgen apply --json` are the machine-readable faces of the deploy path.
+* `flowgen diff` is one of the two commands that never write (the other is `validate`); it needs
+  no more than a read token, and `@last` reads the newest receipt in `.flowgen/receipts/`.
+* Overlays (`overlay`, `withType`, `applyOverlays`, `rebuildPalette`) are a library API: the CLI has
+  no overlay *file* yet, so a project that needs curated knowledge the installation cannot show
+  writes a short script. The palette tier of the public surface is where they live.
 * `nrlint` is not wired into the validation gate: its library API runs no rules without a resolved
   plugin set (verified — a syntactically broken function body lints clean), so a smoke test would
   have asserted nothing.

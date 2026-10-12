@@ -1,0 +1,8 @@
+# Produced by `flowgen palette pull` / `flowgen apply`. In a real project the snapshot, the
+# generated types and the lockfile are committed — see the repository README — and only the
+# receipts and the cache are ignored. Here they are all ignored, because the acceptance run
+# deletes them on purpose.
+palettes/
+.flowgen/
+.flowgen.lock.json
+.tmp-remote.json
