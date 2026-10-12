@@ -17,9 +17,10 @@
 import { normalizeFlowSet } from '../model/normalize.ts';
 import type { FlowSet } from '../model/entities.ts';
 import type { PaletteType } from '../palette/model.ts';
+import type { Problem } from '../validate/problem.ts';
 
 import { Builder, type FlowBuilder } from './builder.ts';
-import { layoutFlowSet, type LayoutOptions } from './layout.ts';
+import { layoutFlowSetWithDiagnostics, type LayoutOptions } from './layout.ts';
 
 export interface BuildOptions {
   /** Palette used to materialise defaults and to classify config nodes. */
@@ -36,6 +37,12 @@ export interface BuildResult {
   readonly keys: ReadonlyMap<string, string>;
   /** Authoring keys used more than once: each reuse was given its own id. */
   readonly duplicateKeys: readonly string[];
+  /**
+   * What the build itself has to say: `layout/cycle` advice, and nothing else today. Not a
+   * validation failure — the flow set is complete and emittable either way — but "your nodes form
+   * a loop, so their geometry is a row" is exactly the kind of thing a build log is for.
+   */
+  readonly problems: readonly Problem[];
 }
 
 export interface FlowSetDefinition {
@@ -52,12 +59,21 @@ export function defineFlowSet(build: (f: FlowBuilder) => void): FlowSetDefinitio
       build(builder);
 
       const raw = builder.toFlowSet();
-      const laidOut = options.layout === false ? raw : layoutFlowSet(raw, options.layout === true ? {} : (options.layout ?? {}));
+      const laidOut =
+        options.layout === false
+          ? { flowSet: raw, problems: [] as readonly Problem[] }
+          : layoutFlowSetWithDiagnostics(raw, options.layout === true ? {} : (options.layout ?? {}));
 
       return {
-        flowSet: normalizeFlowSet(laidOut, { palette: options.palette }),
+        flowSet: normalizeFlowSet(laidOut.flowSet, { palette: options.palette }),
         keys: builder.keys,
         duplicateKeys: builder.duplicateKeys,
+        // Layout advice only. The repairs `normalizeFlowSetWithFixes` reports are deliberately
+        // *not* surfaced here: the builder pads wires itself (a node wired through one port of a
+        // three-output switch is normal authoring), so the build would emit an info diagnostic on
+        // every validate and teach its reader to ignore the level. Those messages belong to
+        // foreign data — the import path — where a repair really is news.
+        problems: laidOut.problems,
       };
     },
   };

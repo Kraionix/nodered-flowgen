@@ -8,6 +8,7 @@
  *
  * The namespace prefix also tells the reader *who* can fix it: `palette/*` means the flow
  * disagrees with the installed node, `graph/*` means the flow disagrees with itself,
+ * `layout/*` and `normalize/*` are the build repairing or annotating what it was given,
  * `overlay/*` means a curated project rule was broken, `plan/*` and `deploy/*` belong to the
  * deploy path.
  */
@@ -31,6 +32,7 @@ export type BuiltinProblemCode =
   | 'graph/duplicate-id'
   | 'graph/subflow-recursion'
   | 'graph/unreachable'
+  | 'layout/cycle'
   | 'normalize/wire-arity';
 
 export type ProblemCode = BuiltinProblemCode | `overlay/${string}` | `plan/${string}` | `deploy/${string}`;

@@ -192,6 +192,23 @@ async function scaffold(dir: string, options: { readonly flow: string; readonly 
   await writeFile(path.join(dir, 'palette.json'), paletteFixture(), 'utf8');
 }
 
+/** Two nodes wired into each other: legal Node-RED, and the shape that used to hang the CLI. */
+function cyclicConfigSource(): string {
+  return `import { defineConfig, defineFlowSet } from ${JSON.stringify(PACKAGE_ENTRY)};
+
+export default defineConfig({
+  flowSet: defineFlowSet((f) => {
+    const tab = f.flow('main', { label: 'Main' });
+    const first = tab.node('inject', { key: 'first', name: 'first' });
+    const second = tab.node('inject', { key: 'second', name: 'second' });
+    first.to(second);
+    second.to(first);
+  }),
+  palette: { default: 'local', profiles: { local: { snapshot: 'palette.json', typesDirectory: 'types.d', cheatSheet: 'palette.md' } } },
+});
+`;
+}
+
 function configSource(options: { readonly flow: string; readonly url?: string }): string {
   const flow =
     options.flow === 'inject'
@@ -257,6 +274,30 @@ test('flowgen validate exits 0 on a valid flow set and 1 on an unknown node type
   } finally {
     await rm(good, { recursive: true, force: true });
     await rm(bad, { recursive: true, force: true });
+  }
+});
+
+test('a feedback loop is laid out and reported instead of hanging the command', async () => {
+  const dir = await tempDir();
+  try {
+    await writeFile(path.join(dir, 'flowgen.config.ts'), cyclicConfigSource(), 'utf8');
+    await writeFile(path.join(dir, 'palette.json'), paletteFixture(), 'utf8');
+
+    // Before the layout fix this command never returned: no output, no exit code, no timeout.
+    const result = await run(dir, ['validate']);
+    assert.equal(result.code, EXIT.ok, result.stderr);
+    assert.match(result.stdout, /info layout\/cycle first\.wires — nodes form a loop: first → second/);
+    assert.match(result.stdout, /hint: geometry is advisory/);
+
+    const json = await run(dir, ['validate', '--json']);
+    const parsed = JSON.parse(json.stdout) as { report: { problems: { code: string }[] } };
+    assert.deepEqual(
+      parsed.report.problems.map((problem) => problem.code),
+      ['layout/cycle'],
+      'the build\u2019s own advice belongs in the same report as the validators\u2019 findings',
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 });
 

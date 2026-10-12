@@ -18,6 +18,7 @@ import { lockfileIdMap, ownedContainers, knownIds } from '../io/lockfile.ts';
 import { AdminApiClient } from '../io/adminApi.ts';
 import { defaultValidators } from '../validate/index.ts';
 import { runValidators, type Capability, type ValidationReport } from '../validate/report.ts';
+import type { Problem } from '../validate/problem.ts';
 
 import { envToken, type CliContext } from './context.ts';
 import { UsageError } from './exit.ts';
@@ -110,6 +111,8 @@ export interface BuiltProject {
   /** Authoring key → id, straight from the builder; written to the lockfile on apply. */
   readonly keys: ReadonlyMap<string, string>;
   readonly duplicateKeys: readonly string[];
+  /** What the build itself reported: `layout/cycle` advice and normalisation repairs. */
+  readonly problems: readonly Problem[];
   /** Base palette plus one entry per inline subflow definition. */
   readonly palette: Readonly<Record<string, PaletteType>>;
 }
@@ -137,6 +140,7 @@ export function buildProject(project: Project, palette: LoadedPalette): BuiltPro
     flowSet: built.flowSet,
     keys: built.keys,
     duplicateKeys: built.duplicateKeys,
+    problems: built.problems,
     palette: overlaid.types,
   };
 }
@@ -167,7 +171,7 @@ export async function prepare(context: CliContext, project: Project, options: Pr
       palette: built.palette,
       targetVersion: palette.snapshot.nodeRedVersion,
     },
-    { mode: options.mode ?? 'collect', capabilities },
+    { mode: options.mode ?? 'collect', capabilities, priorProblems: built.problems },
   );
 
   return { palette, built, report };

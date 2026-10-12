@@ -7,9 +7,23 @@
  * vertical position follows discovery order, and group boxes are the bounding box of their
  * members with the editor's own padding. The result is stable for a given flow set, which is
  * what makes geometry-insensitive diffs actually stay empty.
+ *
+ * Depth is computed on the **condensation** of the wire graph (Tarjan's strongly connected
+ * components), because the obvious worklist — re-enqueue a node whenever a longer path to it is
+ * found — does not terminate once a cycle is reachable from a root: the depth grows without
+ * bound and the CLI never returns. Feedback loops are ordinary in Node-RED (retry loops,
+ * `delay → function → back`, status loops), so this has to be acyclic *by construction*. On the
+ * condensation the graph is a DAG, longest path is one linear pass in reverse topological order,
+ * and every node inside a loop shares its component's column — which is also what looks right on
+ * a canvas. Each loop is reported as `layout/cycle` (info): the geometry is degraded on purpose,
+ * and saying so beats leaving the author to wonder why five nodes are stacked in one column.
+ *
+ * Subflow bodies and containerless nodes are laid out too. They used to keep `0,0`, so an
+ * imported or generated flow opened with its subflow internals piled up at the origin.
  */
 
 import type { FlowSet, Group, Node } from '../model/entities.ts';
+import type { Problem } from '../validate/problem.ts';
 
 export interface LayoutOptions {
   readonly originX?: number;
@@ -23,6 +37,12 @@ export interface LayoutOptions {
   readonly defaultHeight?: number;
 }
 
+export interface LayoutResult {
+  readonly flowSet: FlowSet;
+  /** `layout/cycle` advice. Geometry is always produced; a loop is never an error. */
+  readonly problems: readonly Problem[];
+}
+
 const DEFAULTS: Required<LayoutOptions> = {
   originX: 120,
   originY: 80,
@@ -34,30 +54,64 @@ const DEFAULTS: Required<LayoutOptions> = {
   defaultHeight: 100,
 };
 
-/** Assigns coordinates to nodes that have none, and boxes to every group. */
-export function layoutFlowSet(flowSet: FlowSet, options: LayoutOptions = {}): FlowSet {
-  const config = { ...DEFAULTS, ...options };
-  return { ...flowSet, flows: flowSet.flows.map((flow) => layoutContainer(flow, config, flowSet)) };
-}
-
 interface Container {
   readonly id: string;
   readonly nodes: readonly Node[];
   readonly groups: readonly Group[];
 }
 
-function layoutContainer<T extends Container>(container: T, config: Required<LayoutOptions>, flowSet: FlowSet): T {
-  const scope = new Set(container.nodes.map((node) => node.id));
-  const depth = depths(container.nodes, scope, flowSet);
+/** Assigns coordinates to nodes that have none, and boxes to every group. */
+export function layoutFlowSet(flowSet: FlowSet, options: LayoutOptions = {}): FlowSet {
+  return layoutFlowSetWithDiagnostics(flowSet, options).flowSet;
+}
 
-  // Nodes that already have coordinates keep them: the author may have placed a node on
-  // purpose, and layout must not fight a human.
-  const groupsByDepth = new Map<number, number>();
-  const nodes = container.nodes.map((node) => {
+/** `layoutFlowSet`, plus the `layout/cycle` advice the layout pass is the first to know about. */
+export function layoutFlowSetWithDiagnostics(flowSet: FlowSet, options: LayoutOptions = {}): LayoutResult {
+  const config = { ...DEFAULTS, ...options };
+  const problems: Problem[] = [];
+
+  const container = <T extends Container>(value: T): T => {
+    const nodes = placeNodes(value.nodes, config, problems);
+    return { ...value, nodes, groups: value.groups.map((group) => boxGroup(group, nodes, config)) };
+  };
+
+  return {
+    flowSet: {
+      ...flowSet,
+      subflows: flowSet.subflows.map(container),
+      flows: flowSet.flows.map(container),
+      loose: placeNodes(flowSet.loose, config, problems),
+    },
+    problems,
+  };
+}
+
+/**
+ * Places every node that has no coordinates: column = longest path from a root, row = discovery
+ * order inside that column. A node that already has coordinates keeps them — the author may have
+ * placed it on purpose, and layout must not fight a human.
+ */
+function placeNodes(nodes: readonly Node[], config: Required<LayoutOptions>, problems: Problem[]): readonly Node[] {
+  const { depth, cycles } = wireDepths(nodes);
+
+  for (const cycle of cycles) {
+    problems.push({
+      code: 'layout/cycle',
+      severity: 'info',
+      entity: cycle[0] ?? '(unknown)',
+      path: 'wires',
+      message:
+        cycle.length === 1 ? `node wires to itself: ${cycle[0]}` : `nodes form a loop: ${cycle.join(' → ')}`,
+      hint: 'geometry is advisory: a loop is placed in one column',
+    });
+  }
+
+  const rows = new Map<number, number>();
+  return nodes.map((node) => {
     if (node.geometry !== undefined) return node;
     const column = depth.get(node.id) ?? 0;
-    const row = groupsByDepth.get(column) ?? 0;
-    groupsByDepth.set(column, row + 1);
+    const row = rows.get(column) ?? 0;
+    rows.set(column, row + 1);
     return {
       ...node,
       geometry: {
@@ -66,50 +120,146 @@ function layoutContainer<T extends Container>(container: T, config: Required<Lay
       },
     };
   });
+}
 
-  return { ...container, nodes, groups: container.groups.map((group) => boxGroup(group, nodes, config)) };
+interface Depths {
+  readonly depth: ReadonlyMap<string, number>;
+  /** Nodes that form a loop, one entry per loop, in the order the container lists them. */
+  readonly cycles: readonly (readonly string[])[];
 }
 
 /**
- * Longest-path depth from a root (a node nothing wires into). Unreachable nodes keep depth 0,
- * so they line up in the first column instead of floating off somewhere arbitrary.
+ * Longest-path depth on the condensation of the wire graph.
+ *
+ * Edges are restricted to the container: a wire that leaves the tab is not this tab's business,
+ * and counting it as an incoming edge would silently demote a node from its own root.
  */
-function depths(nodes: readonly Node[], scope: ReadonlySet<string>, flowSet: FlowSet): ReadonlyMap<string, number> {
-  void flowSet;
-  const incoming = new Map<string, number>();
-  for (const node of nodes) {
-    for (const wire of node.wires) {
-      for (const target of wire) incoming.set(target, (incoming.get(target) ?? 0) + 1);
-    }
-  }
+function wireDepths(nodes: readonly Node[]): Depths {
+  const scope = new Set(nodes.map((node) => node.id));
+  const successors = new Map<string, readonly string[]>();
 
-  const depth = new Map<string, number>();
-  const queue: string[] = [];
   for (const node of nodes) {
-    if ((incoming.get(node.id) ?? 0) === 0) {
-      depth.set(node.id, 0);
-      queue.push(node.id);
-    }
-  }
-
-  const byId = new Map(nodes.map((node) => [node.id, node]));
-  while (queue.length > 0) {
-    const id = queue.shift() as string;
-    const node = byId.get(id);
-    if (node === undefined) continue;
+    const targets = new Set<string>();
     for (const wire of node.wires) {
       for (const target of wire) {
-        if (!scope.has(target)) continue;
-        const candidate = (depth.get(id) ?? 0) + 1;
-        if (candidate > (depth.get(target) ?? -1)) {
-          depth.set(target, candidate);
-          queue.push(target);
-        }
+        if (scope.has(target)) targets.add(target);
+      }
+    }
+    successors.set(node.id, [...targets]);
+  }
+
+  const { components, componentOf } = stronglyConnected(nodes, successors);
+  const depth = new Map<number, number>();
+
+  // Tarjan emits a component only once everything it can reach is finished, so the array is in
+  // reverse topological order: walking it backwards visits every predecessor before its
+  // successors, and one pass is enough. Nothing here can iterate forever.
+  for (let current = components.length - 1; current >= 0; current -= 1) {
+    const here = depth.get(current) ?? 0;
+    for (const id of components[current] ?? []) {
+      for (const target of successors.get(id) ?? []) {
+        const next = componentOf.get(target);
+        if (next === undefined || next === current) continue;
+        if (here + 1 > (depth.get(next) ?? 0)) depth.set(next, here + 1);
       }
     }
   }
 
-  return depth;
+  const looped = new Set<number>();
+  for (const [id, component] of componentOf) {
+    const targets = successors.get(id) ?? [];
+    if ((components[component]?.length ?? 0) > 1 || targets.includes(id)) looped.add(component);
+  }
+
+  const byNode = new Map<string, number>();
+  for (const node of nodes) byNode.set(node.id, depth.get(componentOf.get(node.id) ?? -1) ?? 0);
+
+  const cycles: string[][] = [];
+  for (let component = 0; component < components.length; component += 1) {
+    if (!looped.has(component)) continue;
+    // Container order rather than Tarjan order: the message should read the way the author
+    // wrote the flow, and the report must not depend on DFS internals.
+    cycles.push(nodes.filter((node) => componentOf.get(node.id) === component).map((node) => node.id));
+  }
+
+  return { depth: byNode, cycles };
+}
+
+/**
+ * Tarjan's strongly connected components, iteratively.
+ *
+ * Iterative rather than recursive because the DFS depth is the longest chain in the flow: a
+ * generated pipeline of a few thousand nodes in a row is a stack overflow waiting for the first
+ * flow big enough to trigger it, and that failure would be far harder to diagnose than a cycle.
+ *
+ * Components come out in reverse topological order of the condensation — a component is pushed
+ * only after every component it can reach.
+ */
+function stronglyConnected(
+  nodes: readonly Node[],
+  successors: ReadonlyMap<string, readonly string[]>,
+): { readonly components: readonly (readonly string[])[]; readonly componentOf: ReadonlyMap<string, number> } {
+  const index = new Map<string, number>();
+  const low = new Map<string, number>();
+  const onStack = new Set<string>();
+  const stack: string[] = [];
+  const components: string[][] = [];
+  const componentOf = new Map<string, number>();
+  let counter = 0;
+
+  const open = (id: string): void => {
+    index.set(id, counter);
+    low.set(id, counter);
+    counter += 1;
+    stack.push(id);
+    onStack.add(id);
+  };
+
+  for (const root of nodes) {
+    if (index.has(root.id)) continue;
+
+    open(root.id);
+    const work: { readonly id: string; edge: number }[] = [{ id: root.id, edge: 0 }];
+
+    while (work.length > 0) {
+      const frame = work[work.length - 1] as { readonly id: string; edge: number };
+      const targets = successors.get(frame.id) ?? [];
+
+      if (frame.edge < targets.length) {
+        const target = targets[frame.edge] as string;
+        frame.edge += 1;
+        if (!index.has(target)) {
+          open(target);
+          work.push({ id: target, edge: 0 });
+        } else if (onStack.has(target)) {
+          low.set(frame.id, Math.min(low.get(frame.id) ?? 0, index.get(target) ?? 0));
+        }
+        continue;
+      }
+
+      work.pop();
+      const parent = work[work.length - 1];
+      if (parent !== undefined) {
+        low.set(parent.id, Math.min(low.get(parent.id) ?? 0, low.get(frame.id) ?? 0));
+      }
+
+      if (low.get(frame.id) === index.get(frame.id)) {
+        const component: string[] = [];
+        for (;;) {
+          const member = stack.pop();
+          if (member === undefined) break;
+          onStack.delete(member);
+          component.push(member);
+          if (member === frame.id) break;
+        }
+        const number = components.length;
+        components.push(component);
+        for (const member of component) componentOf.set(member, number);
+      }
+    }
+  }
+
+  return { components, componentOf };
 }
 
 /**

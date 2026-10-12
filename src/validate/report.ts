@@ -44,6 +44,12 @@ export interface ValidationRun {
   readonly mode: 'collect' | 'bail';
   /** Capabilities the caller can provide. */
   readonly capabilities?: ReadonlySet<Capability>;
+  /**
+   * Problems found before any validator ran — normalisation repairs, `layout/cycle` advice.
+   * The build path produces them, so they belong in the same report as everything else: a caller
+   * that printed only the validators' findings would hide half of what the tool knows.
+   */
+  readonly priorProblems?: readonly Problem[];
 }
 
 export interface ValidationReport {
@@ -60,11 +66,15 @@ export function runValidators(
   run: ValidationRun,
 ): ValidationReport {
   const capabilities = run.capabilities ?? new Set<Capability>();
-  const problems: Problem[] = [];
+  const problems: Problem[] = [...(run.priorProblems ?? [])];
   const skipped: SkippedValidator[] = [];
   const ran: string[] = [];
 
+  // A build-time error is as fatal as a validation error, so bail mode never starts on top of one.
+  let stopped = run.mode === 'bail' && hasErrors(problems);
+
   for (const validator of validators) {
+    if (stopped) break;
     const missing = (validator.requires ?? []).filter((capability) => !capabilities.has(capability));
     if (missing.length > 0) {
       skipped.push({ name: validator.name, missing });
@@ -77,7 +87,7 @@ export function runValidators(
 
     // Bail mode stops before the next validator once something is unfixable; the caller is
     // about to mutate a server, and continuing would only produce noise.
-    if (run.mode === 'bail' && hasErrors(found)) break;
+    if (run.mode === 'bail' && hasErrors(found)) stopped = true;
   }
 
   return { problems, skipped, ran, hasErrors: hasErrors(problems) };

@@ -175,7 +175,12 @@ export {
   type FlowSetDefinition,
 } from './authoring/defineFlowSet.ts';
 
-export { layoutFlowSet, type LayoutOptions } from './authoring/layout.ts';
+export {
+  layoutFlowSet,
+  layoutFlowSetWithDiagnostics,
+  type LayoutOptions,
+  type LayoutResult,
+} from './authoring/layout.ts';
 
 export {
   P,

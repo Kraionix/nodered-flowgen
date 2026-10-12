@@ -36,8 +36,13 @@ export function normalizeFlowSet(flowSet: FlowSet, context: NormalizeContext): F
  * Normalisation that reports what it changed.
  *
  * Wire padding is a *fix*, not a validation failure — the editor does the same on export — but
- * silently repairing a flow file would hide a real authoring bug, so every repair is reported
- * as an info-level problem the CLI can print.
+ * silently repairing a flow file would hide a real authoring bug, so every repair is reported as
+ * an info-level problem.
+ *
+ * The authoring path deliberately does not surface them: the builder pads wires itself, so a
+ * node wired through one port of a three-output switch — ordinary authoring — would print an
+ * info diagnostic on every validate and teach its reader to ignore the level. These messages
+ * belong to foreign data, which is the `import` path.
  */
 export function normalizeFlowSetWithFixes(
   flowSet: FlowSet,

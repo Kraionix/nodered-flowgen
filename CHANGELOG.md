@@ -36,6 +36,19 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
   fixed point), a runtime probe through a real Node-RED, pinned palette fixtures for 5.0.7 and
   5.0.8, and the seven prior-art defects as negative fixtures.
 
+### Fixed
+
+* **Layout no longer hangs on a flow with a feedback loop.** Depth was computed with a worklist
+  that re-enqueued a node every time a longer path to it was found, so one loop reachable from a
+  root — `inject → f1 → f2 → f1` — made the depth grow without bound and the queue never drain.
+  `validate`, `plan` and `apply` returned nothing at all: no output, no exit code, because the work
+  is synchronous and blocks the event loop. Depth is now the longest path over the *condensation*
+  of the wire graph (Tarjan's strongly connected components, iterative), which is acyclic by
+  construction, and a loop is reported once as `layout/cycle` (info) naming its nodes.
+* **Layout covers subflow bodies and containerless nodes.** `layoutFlowSet` mapped `flowSet.flows`
+  only, so a subflow's interior kept `0,0` and every node piled up at the origin; the acceptance
+  example's `work` node was one of them.
+
 ### Notes
 
 * No build step and no runtime dependencies: the package is ESM TypeScript run through Node's type
