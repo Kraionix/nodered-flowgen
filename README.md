@@ -18,7 +18,7 @@ file.
   write is a compare-and-swap on the instance revision, and every `apply` writes a receipt that
   `rollback` can put back.
 
-Node ≥ 22.18.0, ESM, **zero runtime dependencies**. The published package is compiled JavaScript
+Node ≥ 22.18.0, ESM, **zero runtime dependencies**. What ships is compiled JavaScript
 with declarations: `tsc` → `dist`, and only `dist` is in the tarball. (Node refuses to strip types
 for any file under a `node_modules` path, so a package that shipped its `.ts` sources could be
 imported by nobody — see `test/integration/packaging.spec.ts`, which installs the tarball into a
@@ -32,7 +32,8 @@ only at `npm run build`, which `npm test` runs first and `npm pack` runs through
 ## Quick start
 
 ```sh
-npm install @kraionix/nodered-flowgen
+# not on the npm registry yet — install it from this repository
+npm install github:Kraionix/nodered-flowgen
 npx flowgen init --url http://127.0.0.1:1880     # flowgen.config.ts + .gitignore entries
 npx flowgen palette pull                          # instance → palettes/local.json
 npx flowgen types gen                             # snapshot → palettes/local.d/*.d.ts

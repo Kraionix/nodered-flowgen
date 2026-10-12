@@ -12,6 +12,14 @@
   ],
   "license": "MIT",
   "author": "Kraionix",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kraionix/nodered-flowgen.git"
+  },
+  "homepage": "https://github.com/Kraionix/nodered-flowgen#readme",
+  "bugs": {
+    "url": "https://github.com/Kraionix/nodered-flowgen/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.18.0"

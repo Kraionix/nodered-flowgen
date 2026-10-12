@@ -280,4 +280,4 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
   plugin set (verified — a syntactically broken function body lints clean), so a smoke test would
   have asserted nothing.
 
-[0.1.0]: https://github.com/kraionix/nodered-flowgen/releases/tag/v0.1.0
+[0.1.0]: https://github.com/Kraionix/nodered-flowgen/releases/tag/v0.1.0

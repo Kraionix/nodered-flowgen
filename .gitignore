@@ -1,10 +1,18 @@
 node_modules/
 dist/
+# `tsc` output that is not `dist/`: incremental build state, if it is ever switched on.
+*.tsbuildinfo
 # Scratch space: generated sources written by the printer round-trip test.
 .tmp/
 .flowgen-cache/
 *.receipt.json
 coverage/
 *.tgz
+# The examples produce these by running; their own .gitignore says the same, and this is the
+# belt to those braces, for the next example that forgets to add one.
+examples/*/palettes/
+examples/*/.flowgen/
+examples/*/.flowgen.lock.json
 # test/types/palettes/ is committed: the repository type-checks itself against these
-# augmentations, and types.spec.ts fails when they drift from the generator.
+# augmentations, and types.spec.ts fails when they drift from the generator. It is deliberately
+# *not* covered by the rules above.
