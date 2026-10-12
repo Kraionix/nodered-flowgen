@@ -201,7 +201,7 @@ export function emitSubflow(subflow: SubflowDef, options: EmitOptions): Record<s
   }));
   entry['env'] = subflow.env.map(emitEnvParam);
   entry['meta'] = { ...subflow.meta };
-  const credentials = emitCredentials(undefined, options);
+  const credentials = emitCredentials(subflow.credentials, options);
   if (credentials !== null) entry['credentials'] = credentials;
   entry['color'] = subflow.color ?? '#DDAA99';
   if (subflow.inputLabels !== undefined && subflow.ports.in.length > 0 && !isBlank(subflow.inputLabels)) {
@@ -224,18 +224,28 @@ export function emitSubflow(subflow: SubflowDef, options: EmitOptions): Record<s
 }
 
 /**
- * The `global-config` node carrying the module manifest. Node-RED writes it on *export*, not
- * on deploy, so owning it here is what makes an exported flow set self-describing.
+ * The `global-config` node carrying the module manifest — the entry's **only** writer.
+ *
+ * Node-RED maintains this entry on *export*, not on deploy: the module list is computed from the
+ * types used, `node-red` is dropped, and the entry appears only when what is left is non-empty
+ * (`updateGlobalConfigModuleList` in the editor). An entry that came from a file keeps its own id
+ * and its `env` hint list, which is what makes an imported manifest round-trip unchanged instead
+ * of being replaced by a synthesised twin.
  */
 export function emitGlobalConfig(flowSet: FlowSet): Record<string, unknown> | null {
   const modules = Object.entries(flowSet.modules);
-  if (modules.length === 0) return null;
-  return {
-    id: 'global-config',
+  const manifest = flowSet.manifest;
+  if (manifest === undefined && modules.length === 0) return null;
+
+  const entry: Record<string, unknown> = {
+    id: manifest?.id ?? 'global-config',
     type: 'global-config',
-    env: [],
-    modules: Object.fromEntries(modules.sort(([a], [b]) => (a < b ? -1 : 1))),
+    env: (manifest?.env ?? []).map(emitEnvParam),
   };
+  if (modules.length > 0) {
+    entry['modules'] = Object.fromEntries(modules.sort(([a], [b]) => (a < b ? -1 : 1)));
+  }
+  return entry;
 }
 
 function writeProperties(

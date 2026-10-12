@@ -22,6 +22,7 @@ import {
   type Flow,
   type FlowSet,
   type Geometry,
+  type GlobalManifest,
   type Group,
   type Node,
   type NodeProps,
@@ -51,6 +52,7 @@ export function parseFlowFile(json: unknown, options: ImportOptions): FlowSet {
   const nodeEntries: Record<string, unknown>[] = [];
   const configEntries: Record<string, unknown>[] = [];
   let modules: Record<string, string> = {};
+  let manifest: GlobalManifest | undefined;
 
   for (const entry of json as unknown[]) {
     if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) continue;
@@ -68,14 +70,17 @@ export function parseFlowFile(json: unknown, options: ImportOptions): FlowSet {
         break;
       case 'global-config': {
         const declared = record['modules'];
-        if (declared !== null && typeof declared === 'object') {
+        if (declared !== null && typeof declared === 'object' && !Array.isArray(declared)) {
           modules = Object.fromEntries(
             Object.entries(declared as Record<string, unknown>).filter(
               (entryPair): entryPair is [string, string] => typeof entryPair[1] === 'string',
             ),
           );
         }
-        configEntries.push(record);
+        // Deliberately *not* a config node. `emitGlobalConfig` is the entry's only writer, so
+        // modelling it here as well emitted every imported manifest twice — once from the parse
+        // and once from the synthesis — and the copy that survived had lost the `env` hints.
+        manifest = { id: stringOf(record['id']), env: parseEnv(record['env']) ?? [] };
         break;
       }
       default:
@@ -120,6 +125,7 @@ export function parseFlowFile(json: unknown, options: ImportOptions): FlowSet {
     flows,
     loose: nodesByContainer.get('') ?? [],
     modules,
+    ...(manifest === undefined ? {} : { manifest }),
   };
 }
 
@@ -181,6 +187,7 @@ function parseSubflow(entry: Record<string, unknown>, options: ImportOptions): O
     icon: optionalString(entry['icon']),
     env: parseEnv(entry['env']) ?? [],
     meta: meta !== null && typeof meta === 'object' && !Array.isArray(meta) ? { ...(meta as Record<string, unknown>) } : {},
+    credentials: parseCredentials(entry['credentials']),
     ports: parsePorts(entry),
     inputLabels: parseLabels(entry['inputLabels']),
     outputLabels: parseLabels(entry['outputLabels']),

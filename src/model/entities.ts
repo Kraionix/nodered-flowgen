@@ -174,6 +174,8 @@ export interface SubflowDef {
   /** Always written, even when empty. */
   readonly meta: Readonly<Record<string, unknown>>;
   readonly ports: SubflowPorts;
+  /** A subflow definition can declare credentials for its own nodes to reference. */
+  readonly credentials?: Credentials | undefined;
   readonly inputLabels?: readonly string[] | undefined;
   readonly outputLabels?: readonly string[] | undefined;
   readonly nodes: readonly Node[];
@@ -182,11 +184,27 @@ export interface SubflowDef {
 }
 
 /**
+ * The `global-config` entry: Node-RED's module manifest.
+ *
+ * The editor maintains it on export (`updateGlobalConfigModuleList`): the module list is computed
+ * from the types actually used, `node-red` is removed from it, and the entry is created only when
+ * that list is non-empty. Everything else about the entry — its id and its `env` hint list — is
+ * whatever the imported file had, so both are carried here rather than synthesised: a flow file
+ * that has been through the palette editor carries hints we did not invent and must not lose.
+ */
+export interface GlobalManifest {
+  readonly id: EntityId;
+  readonly env: readonly EnvParam[];
+}
+
+/**
  * A complete flow set: the unit `plan` and `apply` reason about.
  *
  * `modules` is the manifest written to `global-config` (Node-RED's own "this flow needs
  * node-red-dashboard@3.6.6" mechanism). It is derived from the types actually used, minus the
- * core module.
+ * core module. `manifest` carries the entry's identity when the flow set has one; there is
+ * exactly one writer for that entry (`emitGlobalConfig`), which is why an imported manifest can
+ * never be emitted twice.
  */
 export interface FlowSet {
   readonly subflows: readonly SubflowDef[];
@@ -200,6 +218,11 @@ export interface FlowSet {
    */
   readonly loose: readonly Node[];
   readonly modules: Readonly<Record<string, string>>;
+  /**
+   * The `global-config` entry's own facets, when the flow set has one. `undefined` means the
+   * emitter synthesises the entry (id `global-config`, no hints) if there are modules to write.
+   */
+  readonly manifest?: GlobalManifest | undefined;
 }
 
 export const EMPTY_FLOW_SET: FlowSet = { subflows: [], configs: [], flows: [], loose: [], modules: {} };
@@ -244,6 +267,9 @@ export function allIds(flowSet: FlowSet): readonly EntityId[] {
     ...eachGroup(flowSet).map((group) => group.id),
     ...flowSet.flows.map((flow) => flow.id),
     ...eachNode(flowSet).map((node) => node.id),
+    // The manifest entry is a real entry in the file, so its id is a real id: a node may not
+    // reuse it, and a wire may point at it (the editor resolves it like any other entry).
+    ...(flowSet.manifest === undefined ? [] : [flowSet.manifest.id]),
   ];
 }
 

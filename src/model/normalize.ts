@@ -22,7 +22,7 @@ import type { PaletteType } from '../palette/model.ts';
 
 import type { Problem } from '../diagnostics/index.ts';
 
-import type { ConfigNode, EnvParam, FlowSet, Group, Node, NodeProps } from './entities.ts';
+import type { ConfigNode, EnvParam, FlowSet, GlobalManifest, Group, Node, NodeProps } from './entities.ts';
 
 export interface NormalizeContext {
   readonly palette: Readonly<Record<string, PaletteType>>;
@@ -74,7 +74,13 @@ function normalizeInner(flowSet: FlowSet, context: NormalizeContext, fixes: Prob
       configs: flow.configs.map(normalizeConfig),
     })),
     modules: normalizeModules(flowSet.modules),
+    manifest: normalizeManifest(flowSet.manifest),
   };
+}
+
+function normalizeManifest(manifest: GlobalManifest | undefined): GlobalManifest | undefined {
+  if (manifest === undefined) return undefined;
+  return { id: manifest.id, env: manifest.env.map(normalizeEnvParam) };
 }
 
 export function normalizeNode(node: Node, context: NormalizeContext): Node {

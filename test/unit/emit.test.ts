@@ -7,7 +7,7 @@ import { before, test } from 'node:test';
 import { emitEntries, emitFlowSet, emitNode } from '../../src/emit/flowJson.ts';
 import { parseFlowSetText } from '../../src/import/fromFlowJson.ts';
 import { normalizeFlowSet } from '../../src/model/normalize.ts';
-import type { FlowSet, Node } from '../../src/model/entities.ts';
+import { allIds, type FlowSet, type Node } from '../../src/model/entities.ts';
 import { paletteProperty, paletteType, type PaletteType } from '../../src/palette/model.ts';
 import { filesystemSource } from '../../src/palette/sources/filesystem.ts';
 
@@ -321,4 +321,75 @@ test('the emitter output is stable across runs and independent of input order', 
   const forward = emitFlowSet(normalizeFlowSet(imported, { palette }), { palette });
   const again = emitFlowSet(normalizeFlowSet(parseFlowSetText(source, { palette }), { palette }), { palette });
   assert.equal(again, forward);
+});
+
+test('an imported manifest is emitted once, keeping its own id and its env hints', () => {
+  const file = [
+    {
+      id: 'gc_1',
+      type: 'global-config',
+      // The editor's own export shape: the palette declares both `env` and `modules`, so both
+      // are always written.
+      env: [{ name: 'hint', type: 'str', value: 'node-red-dashboard' }],
+      modules: { 'node-red-dashboard': '3.6.6' },
+    },
+    { id: 'tab_1', type: 'tab', label: 'Manifest', disabled: false, info: '' },
+  ];
+
+  const imported = parseFlowSetText(JSON.stringify(file), { palette });
+  assert.deepEqual(imported.configs, [], 'the manifest is not a config node');
+  assert.deepEqual(imported.manifest, {
+    id: 'gc_1',
+    env: [{ name: 'hint', type: 'str', value: 'node-red-dashboard' }],
+  });
+  assert.deepEqual(imported.modules, { 'node-red-dashboard': '3.6.6' });
+  assert.ok(allIds(imported).includes('gc_1'), 'the manifest id is a real id');
+
+  const entries = emitEntries(normalizeFlowSet(imported, { palette }), { palette });
+  assert.deepEqual(
+    entries.map((entry) => entry['id']),
+    ['gc_1', 'tab_1'],
+    'one entry, under its own id — not a synthesised twin',
+  );
+  assert.deepEqual(Object.keys(entries[0] as object), ['id', 'type', 'env', 'modules']);
+});
+
+test('a synthesised manifest keeps the editor\'s own shape', () => {
+  const flowSet: FlowSet = { ...emptyFlowSet(), modules: { 'node-red-dashboard': '3.6.6' } };
+  const entries = emitEntries(flowSet, { palette });
+  assert.deepEqual(entries[0], {
+    id: 'global-config',
+    type: 'global-config',
+    env: [],
+    modules: { 'node-red-dashboard': '3.6.6' },
+  });
+  assert.deepEqual(emitEntries(emptyFlowSet(), { palette }), [], 'no modules, no entry');
+});
+
+test('a subflow definition keeps its credentials', () => {
+  const file = [
+    {
+      id: 'sf_1',
+      type: 'subflow',
+      name: 'Signed',
+      info: '',
+      category: '',
+      in: [],
+      out: [],
+      env: [],
+      meta: {},
+      credentials: { token: '' },
+      color: '#DDAA99',
+    },
+  ];
+
+  const imported = normalizeFlowSet(parseFlowSetText(JSON.stringify(file), { palette }), { palette });
+  assert.deepEqual(imported.subflows[0]?.credentials, { values: { token: '' } });
+
+  // Without a credential provider nothing is written: secrets never belong in a flow file.
+  assert.equal(emitEntries(imported, { palette })[0]?.['credentials'], undefined);
+
+  const withCredentials = emitEntries(imported, { palette, credentials: { token: 's3cret' } });
+  assert.deepEqual(withCredentials[0]?.['credentials'], { token: 's3cret' });
+  assert.equal(withCredentials[0]?.['type'], 'subflow');
 });
