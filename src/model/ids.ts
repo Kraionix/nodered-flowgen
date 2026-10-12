@@ -43,8 +43,14 @@ export function slugify(key: string, policy: IdPolicy = {}): string {
 }
 
 export interface IdAllocator {
-  /** Returns a unique id for `key`; repeated calls with the same key return the same id. */
-  allocate(key: string): string;
+  /**
+   * Returns a unique id for `key`; repeated calls with the same key return the same id.
+   *
+   * `options.slug` separates the *identity* from the *spelling*: the lockfile is keyed by a
+   * namespaced key (`orders:start`) while the id is derived from the local part (`start`), so
+   * renames stay stable and ids stay readable.
+   */
+  allocate(key: string, options?: { readonly slug?: string }): string;
   /** Claims an id that came from a lockfile or an imported flow set. */
   reserve(id: string): void;
   /** Maps a previously allocated key to the id that was used for it. */
@@ -75,7 +81,7 @@ export function createIdAllocator(options: IdAllocatorOptions = {}): IdAllocator
 
   return {
     assigned,
-    allocate(key: string): string {
+    allocate(key: string, options?: { readonly slug?: string }): string {
       const existing = assigned.get(key);
       if (existing !== undefined) return existing;
 
@@ -86,7 +92,7 @@ export function createIdAllocator(options: IdAllocatorOptions = {}): IdAllocator
         return lockedId;
       }
 
-      const base = slugify(key, policy);
+      const base = slugify(options?.slug ?? key, policy);
       let candidate = nextCandidate(base);
       while (taken.has(candidate)) candidate = nextCandidate(base);
       taken.add(candidate);

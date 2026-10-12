@@ -130,6 +130,53 @@ export {
 } from './emit/flowJson.ts';
 
 export {
+  Builder,
+  type BuilderOptions,
+  type ContainerHandle,
+  type FlowBuilder,
+  type FlowHandle,
+  type FlowOptions,
+  type GroupHandle,
+  type GroupOptions,
+  type InstanceOptions,
+  type NodeHandle,
+  type SubflowHandle,
+  type SubflowOptions,
+} from './authoring/builder.ts';
+
+export {
+  defineFlowSet,
+  type BuildOptions,
+  type BuildResult,
+  type FlowSetDefinition,
+} from './authoring/defineFlowSet.ts';
+
+export { layoutFlowSet, type LayoutOptions } from './authoring/layout.ts';
+
+export {
+  P,
+  toEnvOverrides,
+  toEnvParams,
+  type ParamDeclarations,
+  type ParamSpec,
+  type ParamType,
+} from './authoring/params.ts';
+
+export {
+  dashboard,
+  WIDGETS,
+  type Dashboard,
+  type DashboardBase,
+  type DashboardOptions,
+  type GroupProps,
+  type TabProps,
+  type WidgetName,
+  type WidgetProps,
+  type WidgetPropsFor,
+  type WidgetType,
+} from './authoring/helpers/dashboard.ts';
+
+export {
   DEFAULT_PACKAGE_NAME,
   DEFAULT_TYPES_DIRECTORY,
   emitTypes,
