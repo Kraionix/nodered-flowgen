@@ -60,6 +60,7 @@ export function subflowPaletteType(definition: SubflowDefinitionLike): PaletteTy
     align: null,
     inputs,
     outputs,
+    showLabel: null,
     isConfig: false,
     synthetic: false,
     refs: {},

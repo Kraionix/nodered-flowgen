@@ -53,6 +53,7 @@ export interface PaletteTypePatch {
   readonly align?: string | null;
   readonly inputs?: number | null;
   readonly outputs?: number | null;
+  readonly showLabel?: boolean | null;
   readonly isConfig?: boolean;
   /** Created types are open (`synthetic`) by default; set `false` to close the property set. */
   readonly synthetic?: boolean;
@@ -107,6 +108,7 @@ export function applyPatch(existing: PaletteType | undefined, id: string, patch:
     align: patch.align === undefined ? base.align : patch.align,
     inputs: patch.inputs === undefined ? base.inputs : patch.inputs,
     outputs: patch.outputs === undefined ? base.outputs : patch.outputs,
+    showLabel: patch.showLabel === undefined ? base.showLabel : patch.showLabel,
     isConfig: patch.isConfig ?? (patch.category === undefined ? base.isConfig : patch.category === 'config'),
     synthetic: patch.synthetic ?? base.synthetic,
     refs,

@@ -144,6 +144,11 @@ export interface PaletteType {
   readonly align: string | null;
   readonly inputs: number | null;
   readonly outputs: number | null;
+  /**
+   * Whether the editor shows the node's label by default (`def.showLabel`, true when absent).
+   * Needed for canonical output: `l` is written only when it differs from this.
+   */
+  readonly showLabel: boolean | null;
   /** The editor's rule: a config node is a type whose category is `"config"`. */
   readonly isConfig: boolean;
   /**
@@ -279,6 +284,7 @@ export function paletteType(id: string, init: Partial<PaletteType> = {}): Palett
     align: init.align ?? null,
     inputs: init.inputs ?? null,
     outputs: init.outputs ?? null,
+    showLabel: init.showLabel ?? null,
     isConfig: init.isConfig ?? init.category === 'config',
     synthetic: init.synthetic ?? false,
     refs: init.refs ?? refs,

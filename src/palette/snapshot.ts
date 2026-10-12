@@ -215,6 +215,7 @@ function wireType(type: PaletteType): Record<string, unknown> {
   if (type.align !== null) wire['align'] = type.align;
   if (type.inputs !== null) wire['inputs'] = type.inputs;
   if (type.outputs !== null) wire['outputs'] = type.outputs;
+  if (type.showLabel === false) wire['showLabel'] = false;
   if (type.isConfig) wire['isConfig'] = true;
   if (type.synthetic) wire['synthetic'] = true;
   if (Object.keys(type.refs).length > 0) wire['refs'] = wireRefs(type.refs);
@@ -514,6 +515,7 @@ function decodeType(id: string, raw: unknown, path: string, issues: PaletteSnaps
     align: optionalString(record['align'], `${path}.align`, issues),
     inputs: optionalNumber(record['inputs'], `${path}.inputs`, issues),
     outputs: optionalNumber(record['outputs'], `${path}.outputs`, issues),
+    showLabel: record['showLabel'] === false ? false : record['showLabel'] === true ? true : null,
     isConfig: category === 'config' || record['isConfig'] === true,
     synthetic: record['synthetic'] === true,
     refs: decodeRefs(record['refs'], `${path}.refs`, issues) ?? {},
