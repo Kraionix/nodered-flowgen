@@ -292,7 +292,11 @@ test('the dashboard example: two pages, a template body, and a probe that render
   assert.equal(byId.get('summary')?.['tab'], 'overview');
   assert.equal(byId.get('report')?.['tab'], 'detail');
   assert.equal(byId.get('base')?.['theme'], 'dark');
-  assert.equal(byId.get('base')?.['site'], 'Ops console');
+  const base = byId.get('base') ?? {};
+  assert.equal((base['site'] as { name?: string } | undefined)?.name, 'Ops console');
+  // The dashboard client keeps its grid geometry only when `site.sizes` is there and then reads it
+  // while applying the theme, so a site without it renders a blank page.
+  assert.equal((base['site'] as { sizes?: { sy?: number } } | undefined)?.sizes?.sy, 48);
   assert.equal(byId.get('report_table')?.['group'], 'report');
 
   const template = String(byId.get('report_table')?.['format'] ?? '');

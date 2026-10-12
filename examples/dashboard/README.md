@@ -12,7 +12,7 @@ Node-RED with `node-red-dashboard` installed, so everything documented here is e
 |---|---|
 | two dashboard **pages** with an explicit `order` | `Ops → Overview`, `Ops → Detail` |
 | a **`ui_template`** with a multi-line HTML body | the `report` widget; the test asserts the body arrived byte for byte |
-| `ui_base` **theme** and **site** | `ui_base` config node (`dark`, `Ops console`) |
+| `ui_base` **theme** and **site** | `ui_base` config node (`dark`, `{ name: 'Ops console' }`; `sizes` merged in from the dashboard's own defaults) |
 | a **named** widget whose id survives a rename | `key: 'history'` on the chart |
 | an endpoint that can be **probed** | `GET /flowgen/report` → the rendered rows |
 | **two targets**, one of them unreachable | `plan --all-targets` plans `local`, reports `staging`, exits `4` |

@@ -366,8 +366,10 @@ export function planMerge(request: MergeRequest): DeploymentPlan {
   const currentEntries = entriesById(emitEntries(request.current, { palette: request.palette, includeManifest: false }));
   const payloadEntries = entriesById(emitEntries(payload, { palette: request.palette, includeManifest: false }));
   const differences = diffEmittedEntries(currentEntries, payloadEntries, request.diffGeometry === true);
+  // The id list this is called with is assembled from both sides of the diff, so an id that
+  // exists before and after — a subflow instance, typically — arrives twice. It is one change.
   const changedFor = (ids: Iterable<EntityId>): readonly PropertyChange[] =>
-    [...ids].flatMap((id) => {
+    [...new Set(ids)].flatMap((id) => {
       const change = differences.get(id);
       return change === undefined ? [] : [change];
     });

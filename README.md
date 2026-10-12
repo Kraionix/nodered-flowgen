@@ -5,8 +5,11 @@ file.
 
 * **The palette is the schema.** Node types, their properties, their required-ness and their
   references are read from a running instance (or an installation on disk), committed as a
-  snapshot, and projected into TypeScript augmentations — so `node('ui_gaug', …)` fails to compile
-  with `Did you mean 'ui_gauge'?`, and `repeat: 5` fails where `repeat: '5'` is expected.
+  snapshot, and projected into TypeScript augmentations. A type that does not exist is not
+  `keyof KnownTypes` (`node('ui_gaug', …)`), a misspelt property is reported with the compiler's
+  own suggestion (`'labl' does not exist in type 'WidgetProps<"gauge">'. Did you mean to write
+  'label'?`), and a property that wants a string does not take a number (`repeat: 5` fails where
+  `repeat: '5'` is what the palette declared).
 * **The emitter is canonical.** Output is what the editor's own serializer would write: same key
   order, same array order, `wires` exactly as long as the node's port count. A deploy that reads
   the flow back gets the same bytes, which is what makes reviews and diffs meaningful.

@@ -242,6 +242,23 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
 * **`plan/id-collision` split in two**: `plan/unowned-target` for a *container* — the situation
   `--adopt` answers, and the hint says so — and `plan/id-collision` for a config node or a loose
   node whose id is already taken, which only a rename in the sources can fix.
+* **`dashboardIn`'s `site` is typed as the object it is, and now always carries `sizes`.** The
+  option was a `string`, and a string is what the repository's own dashboard example passed — while
+  the dashboard runtime reads `config.site.name` and calls `.replace()` on the result. Nothing
+  failed to compile, validate or deploy: the instance logged
+  `TypeError: Cannot read properties of undefined (reading 'replace')` on every start and kept the
+  default site title. Fixing that exposed the second half: the browser bundle keeps its grid
+  geometry **only** when `site.sizes` exists and then reads `g.sizes.sy` while applying the theme, so
+  a `ui_base` with a site but no `sizes` renders a blank page and logs
+  `TypeError: … (reading 'sy')`. `DashboardSite` (an open object with a documented `name` and
+  `sizes`) replaces the string, `DEFAULT_SITE_SIZES` is what the dashboard editor writes, and
+  `dashboardIn` merges it in even when the author asked for nothing but a title. Both were found by
+  deploying the example to a real instance and reading its log and its browser console — the
+  acceptance run probes only the endpoint next to the dashboard, so it never saw either.
+* **A plan no longer lists the same changed entity twice.** The id list behind each operation is
+  assembled from both sides of the diff, so an entity that exists before and after — a subflow
+  instance, typically — arrived twice and `describePlan` printed `guard_server: ~1, guard_server:
+  ~1`. `changedFor` deduplicates; the count was right either way, the line was not.
 
 ### Notes
 

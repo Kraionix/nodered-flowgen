@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { defineFlowSet } from '../../src/authoring/defineFlowSet.ts';
 import { defineSubflowLibrary, subflows } from '../../src/authoring/library.ts';
-import { dashboard, dashboardIn } from '../../src/authoring/helpers/dashboard.ts';
+import { DEFAULT_SITE_SIZES, dashboard, dashboardIn } from '../../src/authoring/helpers/dashboard.ts';
 import { layoutFlowSet } from '../../src/authoring/layout.ts';
 import { P } from '../../src/authoring/params.ts';
 import { emitEntries } from '../../src/emit/flowJson.ts';
@@ -377,7 +377,7 @@ test('two dashboard pages, a template body and order conventions survive a round
   const flowSet = build(
     defineFlowSet((f) => {
       const tab = f.flow('ops', { label: 'Ops' });
-      const dash = dashboardIn(tab, { baseName: 'Ops', site: 'Ops console', theme: 'dark' });
+      const dash = dashboardIn(tab, { baseName: 'Ops', site: { name: 'Ops console' }, theme: 'dark' });
 
       const first = dash.tab('page_one', { name: 'First', order: 1, icon: 'dashboard' });
       const second = dash.tab('page_two', { name: 'Second', order: 2 });
@@ -393,7 +393,11 @@ test('two dashboard pages, a template body and order conventions survive a round
 
   const configs = eachConfig(flowSet);
   const base = configs.find((config) => config.type === 'ui_base');
-  assert.equal(base?.props.known['site'], 'Ops console', 'ui_base.site is written');
+  assert.deepEqual(
+    base?.props.known['site'],
+    { name: 'Ops console', sizes: DEFAULT_SITE_SIZES },
+    'ui_base.site is the object the dashboard reads, with the grid geometry its client requires',
+  );
   assert.equal(base?.props.known['theme'], 'dark', 'ui_base.theme is written');
   assert.equal(base?.props.known['path'], '/ui', 'an untouched default is still materialised');
 

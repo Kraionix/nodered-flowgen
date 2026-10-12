@@ -56,7 +56,7 @@ export default defineConfig({
 
     // --- the dashboard ---------------------------------------------------------------------
     const ui = f.flow('ops_ui', { label: 'Ops', info: 'Two pages: what is happening, and why.' });
-    const dash = dashboardIn(ui, { baseName: 'Ops', site: 'Ops console', theme: 'dark' });
+    const dash = dashboardIn(ui, { baseName: 'Ops', site: { name: 'Ops console' }, theme: 'dark' });
 
     const overview = dash.tab('overview', { name: 'Overview', order: 1, icon: 'dashboard' });
     const detail = dash.tab('detail', { name: 'Detail', order: 2, icon: 'list' });

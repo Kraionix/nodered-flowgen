@@ -104,10 +104,13 @@ export {
 export {
   dashboard,
   dashboardIn,
+  DEFAULT_SITE_SIZES,
   WIDGETS,
   type Dashboard,
   type DashboardBase,
   type DashboardOptions,
+  type DashboardSite,
+  type DashboardSizes,
   type GroupProps,
   type TabProps,
   type WidgetName,

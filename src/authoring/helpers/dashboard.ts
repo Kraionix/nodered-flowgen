@@ -67,14 +67,78 @@ export type GroupProps = Omit<PropsFor<'ui_group'>, 'key' | 'tab'>;
 export type WidgetPropsFor<T extends string> = Omit<PropsFor<T>, 'group'>;
 export type WidgetProps<W extends WidgetName> = WidgetPropsFor<WidgetType<W>>;
 
+/**
+ * The grid geometry the dashboard's own editor writes into `ui_base.site.sizes`: a 48 px square,
+ * 6 px gaps, no group padding.
+ */
+export interface DashboardSizes {
+  /** Width of one grid square, px. */
+  readonly sx: number;
+  /** Height of one grid square, px. */
+  readonly sy: number;
+  /** Gap between groups, px. */
+  readonly gx: number;
+  /** Gap between groups, px. */
+  readonly gy: number;
+  /** Gap between components, px. */
+  readonly cx: number;
+  /** Gap between components, px. */
+  readonly cy: number;
+  /** Padding of a group's cards, px. */
+  readonly px: number;
+  /** Padding of a group's cards, px. */
+  readonly py: number;
+}
+
+/** What the dashboard editor puts in `site.sizes` when it creates a `ui_base` node. */
+export const DEFAULT_SITE_SIZES: DashboardSizes = Object.freeze({
+  sx: 48,
+  sy: 48,
+  gx: 6,
+  gy: 6,
+  cx: 6,
+  cy: 6,
+  px: 0,
+  py: 0,
+});
+
+/**
+ * `ui_base.site` — the dashboard's site settings.
+ *
+ * An **object, with `sizes`**, and that is worth two paragraphs because the palette cannot say so:
+ * `ui_base` declares `site: {}` with no value and no type, so the generated augmentation types it
+ * as `unknown`, and the dashboard is what gives it a shape.
+ *
+ * * `ui.js`'s `addBaseConfig` does `config.site ? config.site.name : "Node-RED Dashboard"` and then
+ *   `.replace()` on the result, so a **string** here compiles, deploys, and then throws
+ *   `TypeError: Cannot read properties of undefined (reading 'replace')` on every start while the
+ *   site title silently stays the default.
+ * * the browser bundle sets its own grid geometry **only** when `site.sizes` exists
+ *   (`e.site.hasOwnProperty("sizes") && (sizes.setSizes(e.site.sizes), g.sizes = e.site.sizes)`) and
+ *   then reads `g.sizes.sy` unguarded while applying the theme, so a site without `sizes` renders a
+ *   blank page and logs `TypeError: Cannot read properties of undefined (reading 'sy')`.
+ *
+ * `dashboardIn` therefore always writes `site.sizes` — merged over {@link DEFAULT_SITE_SIZES} — even
+ * when the author asked for nothing but a name. The dashboard's own editor does the same thing; the
+ * case only shows up in generated flows, which is exactly where nobody is watching a canvas.
+ */
+export interface DashboardSite {
+  /** The page title the browser shows. The dashboard derives its PWA `short_name` from it. */
+  readonly name?: string;
+  /** Grid geometry. Filled in from {@link DEFAULT_SITE_SIZES} when omitted. */
+  readonly sizes?: Partial<DashboardSizes>;
+  /** Everything else the dashboard keeps in `site`: toolbar flags, date format, and so on. */
+  readonly [key: string]: unknown;
+}
+
 export interface DashboardOptions {
   readonly baseName?: string;
   /** `ui_base.path` — the URL prefix the dashboard is served under. */
   readonly basePath?: string;
   /** `ui_base.theme` — a built-in theme name, or the CSS of a custom one. */
   readonly theme?: string;
-  /** `ui_base.site` — the page title the browser shows. */
-  readonly site?: string;
+  /** `ui_base.site` — the site settings object, not the title string it looks like. */
+  readonly site?: DashboardSite;
 }
 
 export interface DashboardBase {
@@ -114,13 +178,21 @@ function build(builder: ContainerHandle<string>, options: DashboardOptions): Das
     // `ui_tab` is a *config* node is a palette fact, and this file is library code: it must
     // compile and behave without a consumer's generated augmentations, and the dashboard types
     // are not part of this package at all.
+    // `site` is always written, and always carries a complete `sizes`: the browser bundle keeps its
+    // own grid geometry only when `site.sizes` is present and then reads `g.sizes.sy` while
+    // applying the theme, so a `ui_base` without it renders a blank page (see `DashboardSite`).
+    const site: DashboardSite = {
+      ...(options.site ?? {}),
+      sizes: { ...DEFAULT_SITE_SIZES, ...(options.site?.sizes ?? {}) },
+    };
+
     const base = builder.untypedConfig('ui_base', {
       // A stable authoring key: the id must not change when the display name does.
       key: 'base',
       name: options.baseName ?? 'Dashboard',
       ...(options.basePath === undefined ? {} : { path: options.basePath }),
       ...(options.theme === undefined ? {} : { theme: options.theme }),
-      ...(options.site === undefined ? {} : { site: options.site }),
+      site,
     }) as unknown as NodeHandle<'ui_base'>;
 
     // The cast is confined to this one line: the palette's property bags are open interfaces,
