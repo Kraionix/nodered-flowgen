@@ -5,7 +5,8 @@
  * *stable* and documented in the README rather than derived from an errno:
  *
  * * `0` ok;
- * * `1` validation problems (the sources are wrong, the target was never touched);
+ * * `1` the check said no — validation problems, or `diff --check` found a difference (in both
+ *   cases the target was never touched);
  * * `2` usage or configuration error (bad flags, missing config, unusable palette file);
  * * `3` deploy conflict — the revision moved under us and re-planning did not settle it;
  * * `4` the target is not usable: unreachable, unauthorized, or refuses writes;
@@ -30,7 +31,7 @@ export type ExitCode = (typeof EXIT)[keyof typeof EXIT];
 
 export const EXIT_DESCRIPTIONS: Readonly<Record<ExitCode, string>> = {
   0: 'ok',
-  1: 'validation problems',
+  1: 'the check said no (validation problems, or --check found a difference)',
   2: 'usage or configuration error',
   3: 'deploy conflict (revision mismatch)',
   4: 'target unreachable or not permitted',
@@ -59,6 +60,32 @@ export class CliFailure extends Error {
     this.exitCode = exitCode;
     this.hint = hint;
   }
+}
+
+/**
+ * What a thrown value means: which exit code it deserves and what to print.
+ *
+ * Shared because `--all-targets` has to turn a failure into a *per-target* outcome rather than
+ * aborting the fan-out, and "which code, which message" must not be answered differently in the
+ * two places — a target that fails inside a loop has to look exactly like one that fails alone.
+ */
+export interface FailureClassification {
+  readonly exitCode: ExitCode;
+  readonly message: string;
+  readonly hint?: string;
+}
+
+export function classifyFailure(cause: unknown): FailureClassification {
+  if (cause instanceof UsageError) {
+    return { exitCode: EXIT.usage, message: cause.message, ...(cause.hint === undefined ? {} : { hint: cause.hint }) };
+  }
+  if (cause instanceof CliFailure) {
+    return { exitCode: cause.exitCode, message: cause.message, ...(cause.hint === undefined ? {} : { hint: cause.hint }) };
+  }
+  return {
+    exitCode: EXIT.internal,
+    message: `internal error: ${cause instanceof Error ? cause.message : String(cause)}`,
+  };
 }
 
 /** Maps an aborted deploy onto the documented codes: the target's fault is never `1`. */

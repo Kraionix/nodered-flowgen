@@ -80,7 +80,7 @@ test('renderJson is the documented machine shape', () => {
   const parsed = JSON.parse(renderJson(result)) as Record<string, unknown>;
   assert.equal(parsed['command'], 'validate');
   assert.equal(parsed['exitCode'], 1);
-  assert.equal(parsed['outcome'], 'validation problems');
+  assert.equal(parsed['outcome'], 'the check said no (validation problems, or --check found a difference)');
   assert.deepEqual(parsed['report'], { hasErrors: true });
   assert.equal((parsed['diagnostics'] as unknown[]).length, 1);
   assert.equal(parsed['messages'], undefined);

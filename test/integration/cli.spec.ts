@@ -13,7 +13,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { after, before } from 'node:test';
@@ -94,6 +94,15 @@ after(async () => {
   await instance?.stop();
   if (project !== undefined) await rm(project, { recursive: true, force: true });
 });
+
+/** One admin API read, for the tests that need the instance's own view of itself. */
+async function readJson<T>(pathname: string): Promise<T> {
+  const response = await fetch(`${instance.url}${pathname}`, {
+    headers: { 'node-red-api-version': 'v2', authorization: `Bearer ${env['NR_TOKEN']}` },
+  });
+  assert.ok(response.ok, `${pathname} answered ${response.status}`);
+  return (await response.json()) as T;
+}
 
 /** The lockfile as it stands on disk; several tests assert on what import did and did not record. */
 async function readLockfile(): Promise<{ ids: Record<string, string>; owned: Record<string, { containers: string[] }> }> {
@@ -326,4 +335,191 @@ test('validate reports what it could not check, and checks the target when it ha
   assert.deepEqual(checked.report.skipped, [], 'nothing is skipped once the instance is reachable');
   assert.ok(checked.report.ran.includes('target'), 'so the target check actually runs');
   assert.equal(checked.exitCode, 0, 'this instance has every type the project uses');
+});
+
+/**
+ * `diff` — the reviewer's command, in the place a reviewer meets it.
+ *
+ * The instance is deployed at this point in the lifecycle, so the strongest assertion available
+ * here is the one that closes the loop the whole tool is built on: what the instance is running,
+ * exported as a file, compared against the same instance, has to come out identical. Then the file
+ * is edited, and the diff has to name exactly what changed.
+ */
+test('diff compares a file with the instance, and --check turns it into a gate', async () => {
+  const state = await readJson<{ flows: Record<string, unknown>[] }>('/flows');
+  await writeFile(path.join(project, 'remote.json'), JSON.stringify(state.flows, null, 4), 'utf8');
+
+  const same = await cli('diff', '--from', 'remote.json', '--to', '@target:local', '--check');
+  assert.equal(same.code, 0, same.stdout + same.stderr);
+  assert.match(same.stdout, /no differences/);
+
+  // One property of one node: the diff is semantic, so this is the *only* line that moves.
+  const edited = state.flows.map((entry) => (entry['id'] === 'answer' ? { ...entry, func: 'msg.payload = "changed";\nreturn msg;' } : entry));
+  await writeFile(path.join(project, 'edited.json'), JSON.stringify(edited, null, 4), 'utf8');
+
+  const changed = await cli('diff', '--from', 'remote.json', '--to', 'edited.json');
+  assert.equal(changed.code, 0, 'a report is not a failure unless --check says so');
+  assert.match(changed.stdout, /~ node answer \(function\)/);
+  assert.match(changed.stdout, /~func/);
+
+  const gated = await cli('diff', '--from', 'remote.json', '--to', 'edited.json', '--check');
+  assert.equal(gated.code, 1, 'the documented "the check said no" code');
+  assert.match(gated.stdout, /check: the two sides differ/);
+
+  // Geometry is ignored by default and included on request — the one difference a reader cannot
+  // act on is the one that would otherwise drown the report.
+  const moved = state.flows.map((entry) => ({ ...entry, x: Number(entry['x'] ?? 100) + 500 }));
+  await writeFile(path.join(project, 'moved.json'), JSON.stringify(moved, null, 4), 'utf8');
+  assert.match((await cli('diff', '--from', 'remote.json', '--to', 'moved.json')).stdout, /no differences/);
+  assert.match(
+    (await cli('diff', '--from', 'remote.json', '--to', 'moved.json', '--geometry', '--check')).stdout,
+    /~x/,
+  );
+
+  // `@last` is the receipt of the deploy that wrote this instance: before it, the instance was
+  // empty, so everything is an addition. This is what makes "what did that deploy actually do?"
+  // answerable after the fact.
+  const since = await cli('diff', '--from', '@last', '--to', '@target:local');
+  assert.equal(since.code, 0, since.stdout + since.stderr);
+  assert.match(since.stdout, /\+ container main/);
+
+  const unknown = await cli('diff', '--from', '@nonsense', '--to', '@target:local');
+  assert.equal(unknown.code, 2);
+  assert.match(unknown.stderr, /is not a spec this command knows/);
+});
+
+/**
+ * `--adopt`: the container is there, the sources are there, and nothing connects them.
+ *
+ * This is the state a project is in right after `import` — and before the flag existed, the only
+ * way out was `--reassign` (deploy a second copy under a new id) or a hand-edited lockfile. The
+ * adoption itself writes nothing: the sources already match the instance, so the plan is a no-op
+ * whose whole effect is ownership.
+ */
+test('--adopt takes ownership of a container that exists, and the plan says so first', async () => {
+  const lockfile = await readLockfile();
+  assert.deepEqual(lockfile.owned['local']?.containers, ['main']);
+
+  // Forget that we own it, exactly as a project without a lockfile (or after a merge) would be.
+  await writeFile(
+    path.join(project, '.flowgen.lock.json'),
+    `${JSON.stringify({ ...lockfile, owned: { local: { containers: [] } } }, null, 2)}\n`,
+    'utf8',
+  );
+
+  const refused = await cli('plan');
+  assert.equal(refused.code, 1, 'an unowned container the sources define is an error, not a silent no-op');
+  assert.match(refused.stdout, /plan\/unowned-target main\.id/);
+  assert.match(refused.stdout, /--adopt main/);
+
+  const planned = await cli('plan', '--adopt', 'main');
+  assert.equal(planned.code, 0, planned.stdout + planned.stderr);
+  assert.match(planned.stdout, /note {3}main: adopted/);
+
+  const applied = await cli('apply', '--adopt', 'main', '--no-receipt');
+  assert.equal(applied.code, 0, applied.stdout + applied.stderr);
+  assert.match(applied.stdout, /adopted 1 container\(s\): main/);
+  assert.match(applied.stdout, /lockfile updated/);
+
+  const after = await readLockfile();
+  assert.deepEqual(after.owned['local']?.containers, ['main'], 'ownership is recorded');
+
+  const clean = await cli('plan');
+  assert.equal(clean.code, 0, clean.stdout + clean.stderr);
+  assert.doesNotMatch(clean.stdout, /plan\/unowned-target/);
+
+  const unused = await cli('plan', '--adopt', 'not-a-container');
+  assert.equal(unused.code, 0, 'a warning does not fail the plan');
+  assert.match(unused.stdout, /plan\/adopt-unused not-a-container\.id/);
+});
+
+/**
+ * `--all-targets`: one invocation, every configured instance.
+ *
+ * The second project exists because target selection is a project-wide decision: adding a
+ * deliberately unreachable target to the main project would make every other test ambiguous about
+ * which target it means.
+ */
+test('--all-targets plans every target, reports each one, and exits with the worst', async () => {
+  const multi = await mkdtemp(path.join(os.tmpdir(), 'flowgen-cli-multi-'));
+  try {
+    const config = await readFile(path.join(project, 'flowgen.config.ts'), 'utf8');
+    const targets = /^ {2}targets: .*$/m;
+    assert.match(config, targets, 'the fixture config changed shape; update this test with it');
+    await writeFile(
+      path.join(multi, 'flowgen.config.ts'),
+      config.replace(
+        targets,
+        `  targets: {
+    local: { url: ${JSON.stringify(instance.url)}, tokenEnv: 'NR_TOKEN' },
+    mirror: { url: ${JSON.stringify(instance.url)}, tokenEnv: 'NR_TOKEN' },
+    phantom: { url: 'http://127.0.0.1:9', tokenEnv: 'NR_TOKEN' },
+    frozen: { url: ${JSON.stringify(instance.url)}, tokenEnv: 'NR_TOKEN', readOnly: true },
+  },`,
+      ),
+      'utf8',
+    );
+    await cp(path.join(project, 'palettes'), path.join(multi, 'palettes'), { recursive: true });
+    await writeFile(path.join(multi, '.flowgen.lock.json'), await readFile(path.join(project, '.flowgen.lock.json'), 'utf8'), 'utf8');
+
+    const run = async (...argv: string[]): Promise<CliRun> => {
+      let stdout = '';
+      let stderr = '';
+      const code = await runCli({
+        argv,
+        cwd: multi,
+        env,
+        stdout: (chunk) => {
+          stdout += chunk;
+        },
+        stderr: (chunk) => {
+          stderr += chunk;
+        },
+      });
+      return { code, stdout, stderr };
+    };
+
+    const both = await run('plan', '--all-targets', '--target', 'local');
+    assert.equal(both.code, 2, 'the two answers cannot both be right');
+    assert.match(both.stderr, /--all-targets and --target\/--url are alternatives/);
+
+    // Ownership is per target, and that shows up here: `local` owns `main`, `mirror` (the same
+    // instance under another name) does not, so `mirror` refuses an id it would have to take over.
+    // The unreachable target and the two refused ones are reported together, and the exit code is
+    // the highest of them, so a failure is never hidden behind a success.
+    const planned = await run('plan', '--all-targets', '--no-palette-check', '--json');
+    assert.equal(planned.code, 4, 'the highest exit code wins');
+    const envelope = JSON.parse(planned.stdout) as {
+      targets: { target: string }[];
+      failed: string[];
+      diagnostics: { code: string; entity: string }[];
+    };
+    assert.deepEqual(envelope.targets.map((entry) => entry.target), ['frozen', 'local', 'mirror', 'phantom']);
+    assert.deepEqual(envelope.failed, ['frozen', 'mirror', 'phantom']);
+    assert.deepEqual(
+      envelope.diagnostics.filter((problem) => problem.code === 'plan/unowned-target').map((problem) => problem.entity),
+      ['main', 'main'],
+      'each target gets its own plan, and its own reason for refusing',
+    );
+
+    const human = await run('plan', '--all-targets', '--no-palette-check');
+    assert.match(human.stdout, /4 target\(s\): 3 failed \(frozen, mirror, phantom\)/);
+    assert.match(human.stdout, /-- target "mirror"/);
+    assert.match(human.stdout, /note: each target was attempted/);
+
+    // `--adopt` is per target as well, and applies to every one of them: with it, the two named
+    // targets become deployable and only the unreachable one is left failing. A read-only target
+    // is a config decision, so the fan-out skips it and says so rather than failing the run.
+    const applied = await run('apply', '--all-targets', '--dry-run', '--no-palette-check', '--adopt', 'main');
+    assert.match(applied.stdout, /skipped: target "frozen" is marked readOnly/);
+    assert.match(applied.stdout, /-- target "local"/);
+    assert.match(applied.stdout, /-- target "mirror"[\s\S]*note {3}main: adopted/, 'the second target adopts it');
+    assert.doesNotMatch(
+      applied.stdout.slice(applied.stdout.indexOf('-- target "local"'), applied.stdout.indexOf('-- target "mirror"')),
+      /adopted/,
+      'and the first one, which already owns it, is silent about it',
+    );
+  } finally {
+    await rm(multi, { recursive: true, force: true });
+  }
 });

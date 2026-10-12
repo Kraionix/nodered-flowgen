@@ -51,18 +51,30 @@ export type WidgetName = (typeof WIDGETS)[number];
 export type WidgetType<W extends WidgetName> = W extends string ? `ui_${W}` : never;
 
 /**
- * Props the author supplies: everything except the facts the helper already knows — the
- * authoring key, the parent tab and the group reference.
+ * Props the author supplies: everything except the facts the helper already knows — the authoring
+ * key (a positional argument for a page or a panel) and the parent reference it derives.
  */
 export type TabProps = Omit<PropsFor<'ui_tab'>, 'key'>;
 export type GroupProps = Omit<PropsFor<'ui_group'>, 'key' | 'tab'>;
-export type WidgetPropsFor<T extends string> = Omit<PropsFor<T>, 'key' | 'group'>;
+/**
+ * Widget props: the palette's own declarations minus the `group` reference, which the helper fills
+ * in from the group the widget is created in.
+ *
+ * `key` stays available on purpose. A widget with no key is named after its *type* (`ui_gauge`,
+ * then `ui_gauge_2`), which is stable but anonymous; giving one keeps the id stable across a
+ * rename of the display name, exactly as `tab(key, …)` does for a page.
+ */
+export type WidgetPropsFor<T extends string> = Omit<PropsFor<T>, 'group'>;
 export type WidgetProps<W extends WidgetName> = WidgetPropsFor<WidgetType<W>>;
 
 export interface DashboardOptions {
   readonly baseName?: string;
+  /** `ui_base.path` — the URL prefix the dashboard is served under. */
   readonly basePath?: string;
+  /** `ui_base.theme` — a built-in theme name, or the CSS of a custom one. */
   readonly theme?: string;
+  /** `ui_base.site` — the page title the browser shows. */
+  readonly site?: string;
 }
 
 export interface DashboardBase {
@@ -108,6 +120,7 @@ function build(builder: ContainerHandle<string>, options: DashboardOptions): Das
       name: options.baseName ?? 'Dashboard',
       ...(options.basePath === undefined ? {} : { path: options.basePath }),
       ...(options.theme === undefined ? {} : { theme: options.theme }),
+      ...(options.site === undefined ? {} : { site: options.site }),
     }) as unknown as NodeHandle<'ui_base'>;
 
     // The cast is confined to this one line: the palette's property bags are open interfaces,

@@ -127,6 +127,21 @@ export {
   type FlowState,
 } from './io/adminApi.ts';
 
+// `flowgen diff`: the same comparison, for the same reason. A consumer who wants to diff two
+// documents has `emitEntries` (public, testing tier) and can compare what it returns; the report
+// this file builds — kinds, impact, module drift — is shaped for the command's output.
+export {
+  describeDiff,
+  diffFlowSets,
+  type DiffEntity,
+  type DiffKind,
+  type DiffOptions,
+  type DiffSide,
+  type DiffStatus,
+  type FlowSetDiff,
+  type ModuleChange,
+} from './io/diff.ts';
+
 export {
   applyDeployment,
   rollbackDeployment,

@@ -188,6 +188,7 @@ function planOf(current: FlowSet, desired: FlowSet, options: Partial<MergeReques
     ownedEntities: options.ownedEntities ?? new Set<string>(),
     ...(options.prune === undefined ? {} : { prune: options.prune }),
     ...(options.reassign === undefined ? {} : { reassign: options.reassign }),
+    ...(options.adopt === undefined ? {} : { adopt: options.adopt }),
     ...(options.diffGeometry === undefined ? {} : { diffGeometry: options.diffGeometry }),
   });
 }
@@ -296,9 +297,11 @@ test('a colliding container is refused, and --reassign deploys it under a fresh 
   const desired = flowSetWith({ flows: [flow('orders', 'Ours', [node('o1', 'inject')])] });
 
   const refused = planOf(current, desired);
-  assert.deepEqual(refused.problems.map((problem) => problem.code), ['plan/id-collision']);
+  assert.deepEqual(refused.problems.map((problem) => problem.code), ['plan/unowned-target']);
+  assert.match(refused.problems[0]?.hint ?? '', /--adopt orders/);
   assert.deepEqual(refused.payload.flows.map((entry) => entry.label), ['Theirs'], 'their container is untouched');
   assert.deepEqual(refused.unowned, ['orders']);
+  assert.deepEqual(refused.adopted, []);
 
   const reassigned = planOf(current, desired, { reassign: true });
   assert.deepEqual(reassigned.problems, []);
@@ -601,4 +604,72 @@ test('receipts round-trip and refuse to lose the previous flow set', () => {
   const broken = parseReceipt('{"receiptVersion":1}');
   assert.equal(broken.ok, false);
   if (!broken.ok) assert.equal(broken.errors[0]?.path, 'previousFlows');
+});
+
+test('a container on the target is refused until --adopt names it, and then it is ours', () => {
+  const current = flowSetWith({
+    flows: [flow('orders', 'Orders', [node('o1', 'inject'), node('o2', 'debug')])],
+    configs: [config('broker', { port: 1883 }, 'orders')],
+  });
+  const desired = flowSetWith({
+    // The same container as the sources would have it after `flowgen import`: one node renamed.
+    flows: [flow('orders', 'Orders', [node('o1', 'inject'), { ...node('o2', 'debug'), props: { known: { name: 'sink' }, extras: {} } }])],
+    configs: [config('broker', { port: 1883 }, 'orders')],
+  });
+
+  const refused = planOf(current, desired);
+  assert.deepEqual(
+    refused.problems.map((problem) => [problem.code, problem.severity]),
+    [['plan/unowned-target', 'error']],
+  );
+  assert.deepEqual(refused.payload.flows.map((entry) => entry.label), ['Orders'], 'their container is copied through');
+
+  const adopted = planOf(current, desired, { adopt: ['orders'] });
+  assert.deepEqual(adopted.problems, [], 'adoption is the answer to the refusal, not another error');
+  assert.deepEqual(adopted.adopted, ['orders']);
+  assert.deepEqual(adopted.unowned, [], 'the container is no longer somebody else\'s');
+  assert.deepEqual(adopted.notes.map((note) => note.code), ['adopted']);
+  assert.match(adopted.notes[0]?.message ?? '', /orders: adopted/);
+  // Adoption plans the container like one of ours: the one edited node becomes an update, and the
+  // config node inside it is ours as well (it used to count as a foreign reference).
+  assert.deepEqual(
+    adopted.operations.filter((operation) => MUTATION_KINDS.includes(operation.kind)).map((operation) => `${operation.kind}:${operation.id}`),
+    ['update-container:orders'],
+  );
+});
+
+test('adopting what the sources already match is an operation with no changes', () => {
+  const current = flowSetWith({ flows: [flow('orders', 'Orders', [node('o1', 'inject')])] });
+  const desired = flowSetWith({ flows: [flow('orders', 'Orders', [node('o1', 'inject')])] });
+
+  const plan = planOf(current, desired, { adopt: ['orders'] });
+  assert.deepEqual(plan.problems, []);
+  assert.deepEqual(plan.adopted, ['orders']);
+  assert.equal(isNoop(plan), true, 'the takeover itself writes nothing to the instance');
+  assert.deepEqual(writtenContainers(plan), ['orders'], '...but the container is ours to record');
+});
+
+test('--adopt naming something the target does not have warns instead of pretending', () => {
+  const current = flowSetWith({ flows: [flow('orders', 'Orders', [])] });
+  const desired = flowSetWith({ flows: [flow('orders', 'Orders', []), flow('reports', 'Reports', [])] });
+
+  const plan = planOf(current, desired, { adopt: ['reports', 'orders'] });
+  assert.deepEqual(
+    plan.problems.map((problem) => [problem.code, problem.severity, problem.entity]),
+    [['plan/adopt-unused', 'warn', 'reports']],
+  );
+  assert.deepEqual(plan.adopted, ['orders'], 'only the container that exists is recorded as adopted');
+});
+
+test('adoption does not claim the right to delete: --prune still only removes our own', () => {
+  const current = flowSetWith({
+    flows: [flow('orders', 'Orders', [node('o1', 'inject')]), flow('legacy', 'Legacy', [node('l1', 'inject')])],
+  });
+  const desired = flowSetWith({ flows: [flow('orders', 'Orders', [node('o1', 'inject')])] });
+
+  // `legacy` is on the target, is not in the sources and is not adopted: it stays, adopted or not.
+  const plan = planOf(current, desired, { adopt: ['orders'], prune: true });
+  assert.deepEqual(plan.deletions, []);
+  assert.deepEqual(plan.unowned, ['legacy']);
+  assert.ok(plan.operations.some((operation) => operation.kind === 'leave-alien' && operation.id === 'legacy'));
 });

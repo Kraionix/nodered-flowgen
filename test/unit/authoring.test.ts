@@ -3,11 +3,14 @@ import test from 'node:test';
 
 import { defineFlowSet } from '../../src/authoring/defineFlowSet.ts';
 import { defineSubflowLibrary, subflows } from '../../src/authoring/library.ts';
-import { dashboard } from '../../src/authoring/helpers/dashboard.ts';
+import { dashboard, dashboardIn } from '../../src/authoring/helpers/dashboard.ts';
 import { layoutFlowSet } from '../../src/authoring/layout.ts';
 import { P } from '../../src/authoring/params.ts';
 import { emitEntries } from '../../src/emit/flowJson.ts';
-import { eachNode, type FlowSet } from '../../src/model/entities.ts';
+import { eachConfig, eachNode, type FlowSet } from '../../src/model/entities.ts';
+import { emitFlowSet } from '../../src/emit/flowJson.ts';
+import { parseFlowFile } from '../../src/import/fromFlowJson.ts';
+import { normalizeFlowSet } from '../../src/model/normalize.ts';
 import { paletteProperty, paletteType, type PaletteType } from '../../src/palette/model.ts';
 
 const PALETTE: Record<string, PaletteType> = {
@@ -78,14 +81,24 @@ const PALETTE: Record<string, PaletteType> = {
     nodeSet: 'node-red-dashboard/ui_base',
     version: '3.6.6',
     category: 'config',
-    defaults: { name: paletteProperty({ value: '' }), path: paletteProperty({ value: '/ui' }) },
+    defaults: {
+      name: paletteProperty({ value: '' }),
+      path: paletteProperty({ value: '/ui' }),
+      theme: paletteProperty({ value: '' }),
+      site: paletteProperty({ value: '' }),
+    },
   }),
   ui_tab: paletteType('ui_tab', {
     module: 'node-red-dashboard',
     nodeSet: 'node-red-dashboard/ui_tab',
     version: '3.6.6',
     category: 'config',
-    defaults: { name: paletteProperty({ value: '' }), label: paletteProperty({ value: '' }), icon: paletteProperty({ value: '' }) },
+    defaults: {
+      name: paletteProperty({ value: '' }),
+      label: paletteProperty({ value: '' }),
+      icon: paletteProperty({ value: '' }),
+      order: paletteProperty({ value: 0 }),
+    },
   }),
   ui_group: paletteType('ui_group', {
     module: 'node-red-dashboard',
@@ -96,6 +109,40 @@ const PALETTE: Record<string, PaletteType> = {
       name: paletteProperty({ value: '' }),
       tab: paletteProperty({ type: 'ui_tab', required: true }),
       width: paletteProperty({ value: 6 }),
+      order: paletteProperty({ value: 0 }),
+    },
+  }),
+  ui_text: paletteType('ui_text', {
+    module: 'node-red-dashboard',
+    nodeSet: 'node-red-dashboard/ui_text',
+    version: '3.6.6',
+    inputs: 1,
+    outputs: 0,
+    defaults: {
+      group: paletteProperty({ type: 'ui_group', required: true }),
+      name: paletteProperty({ value: '' }),
+      order: paletteProperty({ value: 0 }),
+      format: paletteProperty({ value: '' }),
+    },
+  }),
+  ui_template: paletteType('ui_template', {
+    module: 'node-red-dashboard',
+    nodeSet: 'node-red-dashboard/ui_template',
+    version: '3.6.6',
+    inputs: 1,
+    outputs: 0,
+    defaults: {
+      group: paletteProperty({ type: 'ui_group', required: true }),
+      name: paletteProperty({ value: '' }),
+      order: paletteProperty({ value: 0 }),
+      width: paletteProperty({ value: 0 }),
+      height: paletteProperty({ value: 0 }),
+      format: paletteProperty({ value: '' }),
+      storeOutMessages: paletteProperty({ value: true }),
+      fwdInMessages: paletteProperty({ value: true }),
+      resendOnRefresh: paletteProperty({ value: false }),
+      templateScope: paletteProperty({ value: 'local' }),
+      className: paletteProperty({ value: '' }),
     },
   }),
   ui_gauge: paletteType('ui_gauge', {
@@ -108,6 +155,7 @@ const PALETTE: Record<string, PaletteType> = {
       name: paletteProperty({ value: '' }),
       group: paletteProperty({ type: 'ui_group', required: true }),
       min: paletteProperty({ value: 0 }),
+      order: paletteProperty({ value: 0 }),
     },
   }),
 };
@@ -315,6 +363,73 @@ test('the dashboard helper wires the three-level tree and fills in the group ref
   assert.equal(gauge?.props.known['group'], 'panel', 'the widget points at the group without repeating it');
   assert.equal(gauge?.props.known['min'], 0);
   assert.equal(gauge?.props.known['name'], '', 'palette defaults are materialised');
+});
+
+/**
+ * The dashboard coverage the v1 review asked for: two pages in one flow set, a `ui_template` with
+ * a real body, the `ui_base` theme/site pair, and the `order` convention that decides what the
+ * reader sees first. All four are emitted *and* read back, because the editor's own ordering rules
+ * are the part that a hand-written test tends to skip.
+ */
+test('two dashboard pages, a template body and order conventions survive a round trip', () => {
+  const template = `<div style="padding:4px">\n  <b ng-bind="msg.payload"></b>\n  <span>\\o/ "quoted"</span>\n</div>`;
+
+  const flowSet = build(
+    defineFlowSet((f) => {
+      const tab = f.flow('ops', { label: 'Ops' });
+      const dash = dashboardIn(tab, { baseName: 'Ops', site: 'Ops console', theme: 'dark' });
+
+      const first = dash.tab('page_one', { name: 'First', order: 1, icon: 'dashboard' });
+      const second = dash.tab('page_two', { name: 'Second', order: 2 });
+
+      const panelOne = dash.group('panel_one', first, { name: 'Overview', width: 6, order: 1 });
+      const panelTwo = dash.group('panel_two', second, { name: 'Details', width: 12, order: 2 });
+
+      dash.gauge(panelOne, { name: 'load', min: 0, max: 100, order: 2 });
+      dash.text(panelOne, { name: 'status', order: 1 });
+      dash.template(panelTwo, { key: 'report', name: 'report', format: template, height: 4, order: 1 });
+    }),
+  );
+
+  const configs = eachConfig(flowSet);
+  const base = configs.find((config) => config.type === 'ui_base');
+  assert.equal(base?.props.known['site'], 'Ops console', 'ui_base.site is written');
+  assert.equal(base?.props.known['theme'], 'dark', 'ui_base.theme is written');
+  assert.equal(base?.props.known['path'], '/ui', 'an untouched default is still materialised');
+
+  const tabs = configs.filter((config) => config.type === 'ui_tab');
+  assert.deepEqual(tabs.map((config) => config.props.known['name']), ['First', 'Second']);
+  assert.deepEqual(tabs.map((config) => config.props.known['order']), [1, 2]);
+
+  const groups = configs.filter((config) => config.type === 'ui_group');
+  assert.deepEqual(
+    groups.map((group) => [group.props.known['tab'], group.props.known['order'], group.props.known['width']]),
+    [['page_one', 1, 6], ['page_two', 2, 12]],
+    'each panel points at its own page, and keeps its order and width',
+  );
+
+  const widgets = eachNode(flowSet).filter((node) => node.type.startsWith('ui_'));
+  assert.deepEqual(
+    widgets.map((node) => [node.type, node.props.known['group'], node.props.known['order']]),
+    [['ui_gauge', 'panel_one', 2], ['ui_text', 'panel_one', 1], ['ui_template', 'panel_two', 1]],
+  );
+
+  // The template body is data: quotes, backslashes, newlines and `$` included. It is stored
+  // verbatim, not interpolated and not escaped a second time.
+  const report = widgets.find((node) => node.type === 'ui_template');
+  assert.equal(report?.props.known['format'], template);
+  assert.equal(report?.props.known['height'], 4);
+
+  // Emit, read back, and require the same tree: this is the property the editor depends on when
+  // it reloads the page and re-registers every config node.
+  const document = emitFlowSet(flowSet, { palette: PALETTE });
+  const reparsed = normalizeFlowSet(parseFlowFile(JSON.parse(document), { palette: PALETTE }), { palette: PALETTE });
+  assert.equal(emitFlowSet(reparsed, { palette: PALETTE }), document, 'the emitted document is a fixed point');
+
+  const entries = JSON.parse(document) as Record<string, unknown>[];
+  const templateEntry = entries.find((entry) => entry['id'] === 'report');
+  assert.equal(templateEntry?.['format'], template, 'the template body is byte-identical after emission');
+  assert.equal(templateEntry?.['group'], 'panel_two');
 });
 
 test('untyped() is an escape hatch that keeps the property bag open', () => {

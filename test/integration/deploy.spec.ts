@@ -131,6 +131,17 @@ function buildFlowSet(): FlowSet {
   return built.flowSet;
 }
 
+/**
+ * Every id the build allocated, the way the CLI's lockfile records them.
+ *
+ * Config nodes are checked against ownership too: without this, a *second* deploy sees the config
+ * nodes the first one created as somebody else's and refuses the id collision — which is the
+ * behaviour that used to be silent (our config lost to theirs) and is now an error.
+ */
+function ownedIds(): ReadonlySet<string> {
+  return new Set(definition.build({ palette }).keys.values());
+}
+
 function paletteWithSubflows(flowSet: FlowSet): Record<string, PaletteType> {
   const snapshot = {
     schemaVersion: 1,
@@ -207,7 +218,7 @@ test('apply creates the containers, keeps a foreign tab, and the flow answers at
     desired: flowSet,
     palette,
     owned: new Set(),
-    ownedEntities: new Set(),
+    ownedEntities: ownedIds(),
     problems: (await validate(flowSet)).problems,
     receiptPath: path.join(instance.userDir, 'receipt.json'),
   });
@@ -259,6 +270,7 @@ test('what the server reads back is byte-identical to what we emitted, key order
     desired: flowSet,
     palette: paletteNow,
     owned: new Set(['orders', 'scale']),
+    ownedEntities: ownedIds(),
     problems: [],
   });
   assert.equal(applied.applied, true, applied.message);
@@ -297,6 +309,7 @@ test('a stale revision is refused and the caller re-plans', async () => {
     desired: flowSet,
     palette,
     owned: new Set(['orders', 'scale']),
+    ownedEntities: ownedIds(),
     problems: [],
   });
   assert.equal(result.applied, true, 'apply re-reads and re-plans instead of clobbering');
@@ -321,6 +334,7 @@ test('rollback restores the instance exactly as it was', async () => {
     desired: flowSet,
     palette,
     owned: new Set(['orders', 'scale']),
+    ownedEntities: ownedIds(),
     problems: [],
     receiptPath: path.join(instance.userDir, 'receipt.json'),
   });

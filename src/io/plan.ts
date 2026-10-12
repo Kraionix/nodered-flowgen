@@ -100,7 +100,7 @@ export interface PlanOperation {
 
 /** A decision that is not about one entity. */
 export interface PlanNote {
-  readonly code: 'reassigned';
+  readonly code: 'reassigned' | 'adopted';
   readonly entity: EntityId;
   readonly message: string;
 }
@@ -119,6 +119,16 @@ export interface MergeRequest {
   readonly prune?: boolean;
   /** Give a colliding container a fresh id instead of refusing to write it. */
   readonly reassign?: boolean;
+  /**
+   * Containers that already exist on the target and that this run takes ownership of.
+   *
+   * Adoption is the companion of `import`: a container somebody built in the editor is read into
+   * the sources, and the lockfile has to be told that it is ours now — otherwise every plan
+   * refuses to touch it (`plan/unowned-target`) for ever, and `--reassign` would deploy a second
+   * copy under a new id. Adopting *itself* writes nothing to the instance: the container is
+   * planned exactly like one of ours, so an unchanged source is an operation with no changes.
+   */
+  readonly adopt?: Iterable<EntityId>;
   /** Include `x`/`y`/`w`/`h` in the diff (off by default). */
   readonly diffGeometry?: boolean;
   /** Problems from the validation gate, carried through so one report holds everything. */
@@ -135,6 +145,8 @@ export interface DeploymentPlan {
   readonly deletions: readonly EntityId[];
   /** Containers present on the instance that we do not own: reported, never touched. */
   readonly unowned: readonly EntityId[];
+  /** Containers this plan takes ownership of (`--adopt`), whatever else it does. */
+  readonly adopted: readonly EntityId[];
   readonly notes: readonly PlanNote[];
   readonly problems: readonly Problem[];
 }
@@ -152,11 +164,49 @@ export function planMerge(request: MergeRequest): DeploymentPlan {
   const problems: Problem[] = [...(request.problems ?? [])];
   const notes: PlanNote[] = [];
   const operations: PlanOperation[] = [];
-  const mine = (id: EntityId): boolean => request.ownedEntities.has(id);
+  const adopted = new Set<EntityId>(request.adopt ?? []);
+
+  // Which container an entity lives in, for the instance as it is now. Adopting a container has to
+  // adopt what is inside it: an `import`ed tab brings its config nodes with it, and a plan that
+  // took the tab but refused its `mqtt-broker` as somebody else's would be unusable.
+  const containerOfEntity = new Map<EntityId, EntityId | undefined>();
+  for (const node of eachNode(request.current)) containerOfEntity.set(node.id, node.z);
+  for (const config of eachConfig(request.current)) containerOfEntity.set(config.id, config.z);
+  for (const group of eachGroup(request.current)) containerOfEntity.set(group.id, group.z);
+
+  const mine = (id: EntityId): boolean => {
+    if (request.ownedEntities.has(id) || adopted.has(id)) return true;
+    const owner = containerOfEntity.get(id);
+    return owner !== undefined && adopted.has(owner);
+  };
+  /** A container is ours if the lockfile says so, or if this run adopts it. */
+  const mineContainer = (id: EntityId): boolean => request.owned.has(id) || adopted.has(id);
 
   const currentContainers = new Map<EntityId, Container>();
   for (const flow of request.current.flows) currentContainers.set(flow.id, flow);
   for (const subflow of request.current.subflows) currentContainers.set(subflow.id, subflow);
+
+  // Adoption is a statement about a container that exists. Naming one that does not is a mistake
+  // in the invocation rather than a difference, and it is reported as a warning instead of being
+  // ignored: silently doing nothing would leave the caller believing a takeover had happened.
+  for (const id of adopted) {
+    // Already ours: nothing to take over, and saying so on every run of `--all-targets` would be
+    // noise. The flag is idempotent by design.
+    if (request.owned.has(id)) continue;
+
+    if (currentContainers.has(id)) {
+      notes.push({ code: 'adopted', entity: id, message: `${id}: adopted — this plan treats it as ours` });
+    } else {
+      problems.push({
+        code: 'plan/adopt-unused',
+        severity: 'warn',
+        entity: id,
+        path: 'id',
+        message: `--adopt ${id}: ${request.target} has no container with that id`,
+        hint: 'nothing was adopted; check the id with `flowgen plan` or in the editor',
+      });
+    }
+  }
 
   // ------------------------------------------------------------------------------------
   // 1. Containers: the ids the payload uses, and the instance's containers we leave alone
@@ -173,7 +223,7 @@ export function planMerge(request: MergeRequest): DeploymentPlan {
 
   const place = (container: Container): void => {
     const existing = currentContainers.get(container.id);
-    if (existing === undefined || request.owned.has(container.id)) {
+    if (existing === undefined || mineContainer(container.id)) {
       placements.push({ previous: container.id, container });
       return;
     }
@@ -182,12 +232,12 @@ export function planMerge(request: MergeRequest): DeploymentPlan {
     // work — the exact thing ownership exists to prevent — and it used to happen silently.
     if (request.reassign !== true) {
       problems.push({
-        code: 'plan/id-collision',
+        code: 'plan/unowned-target',
         severity: 'error',
         entity: container.id,
         path: 'id',
         message: `"${container.id}" already exists on ${request.target} and is not ours`,
-        hint: 'rename it in the sources, or pass --reassign to deploy it under a fresh id',
+        hint: `pass --adopt ${container.id} to take ownership of it, rename it in the sources, or pass --reassign to deploy it under a fresh id`,
       });
       return;
     }
@@ -217,10 +267,10 @@ export function planMerge(request: MergeRequest): DeploymentPlan {
   // 2. Config nodes, in every scope (D20), and containerless nodes
   // ------------------------------------------------------------------------------------
 
-  const alienContainers = new Set<EntityId>([...currentContainers.keys()].filter((id) => !request.owned.has(id)));
+  const alienContainers = new Set<EntityId>([...currentContainers.keys()].filter((id) => !mineContainer(id)));
   const inAlienContainer = (z: EntityId | undefined): boolean => z !== undefined && alienContainers.has(z);
 
-  const foreign = foreignReferences(request.current, request.palette, request.owned, request.ownedEntities);
+  const foreign = foreignReferences(request.current, request.palette, currentContainers, mine);
   const currentConfigs = eachConfig(request.current).filter((config) => !inAlienContainer(config.z));
   const currentLoose = request.current.loose.filter((node) => !inAlienContainer(node.z));
 
@@ -264,7 +314,7 @@ export function planMerge(request: MergeRequest): DeploymentPlan {
   for (const container of [...request.current.flows, ...request.current.subflows]) {
     if (replaced.has(container.id)) continue;
 
-    if (request.owned.has(container.id) && prune) {
+    if (mineContainer(container.id) && prune && !adopted.has(container.id)) {
       // Ours, absent from the sources, and pruning was asked for.
       if (!containsContainer(request.desired, container.id)) {
         deletions.push(container.id);
@@ -272,7 +322,7 @@ export function planMerge(request: MergeRequest): DeploymentPlan {
       }
     }
 
-    if (!request.owned.has(container.id)) unowned.push(container.id);
+    if (!mineContainer(container.id)) unowned.push(container.id);
     // A config node we decided to delete has to leave the container it lives in, even when the
     // container itself is copied through — otherwise the plan would report a deletion that the
     // payload does not perform.
@@ -313,9 +363,9 @@ export function planMerge(request: MergeRequest): DeploymentPlan {
   // 4. Operations: the payload against the instance, entity by entity
   // ------------------------------------------------------------------------------------
 
-  const currentEntries = byId(emitEntries(request.current, { palette: request.palette, includeManifest: false }));
-  const payloadEntries = byId(emitEntries(payload, { palette: request.palette, includeManifest: false }));
-  const differences = diffAll(currentEntries, payloadEntries, request.diffGeometry === true);
+  const currentEntries = entriesById(emitEntries(request.current, { palette: request.palette, includeManifest: false }));
+  const payloadEntries = entriesById(emitEntries(payload, { palette: request.palette, includeManifest: false }));
+  const differences = diffEmittedEntries(currentEntries, payloadEntries, request.diffGeometry === true);
   const changedFor = (ids: Iterable<EntityId>): readonly PropertyChange[] =>
     [...ids].flatMap((id) => {
       const change = differences.get(id);
@@ -372,7 +422,19 @@ export function planMerge(request: MergeRequest): DeploymentPlan {
     operations.push({ kind: 'delete-node', id: node.id, label: node.type, changes: [] });
   }
 
-  return { target: request.target, rev: request.rev, payload, operations, deletions, unowned, notes, problems };
+  return {
+    target: request.target,
+    rev: request.rev,
+    payload,
+    operations,
+    deletions,
+    unowned,
+    // Only ids that are actually there and were not ours already: the lockfile must not record
+    // ownership of a container that does not exist, or `--prune` would later try to delete it.
+    adopted: [...adopted].filter((id) => currentContainers.has(id) && !request.owned.has(id)).sort(),
+    notes,
+    problems,
+  };
 }
 
 function containsContainer(flowSet: FlowSet, id: EntityId): boolean {
@@ -478,23 +540,23 @@ function describeReference(reference: Reference): string {
 function foreignReferences(
   current: FlowSet,
   palette: Readonly<Record<string, PaletteType>>,
-  owned: ReadonlySet<EntityId>,
-  ownedEntities: ReadonlySet<EntityId>,
+  containers: ReadonlyMap<EntityId, Container>,
+  isOurs: (id: EntityId) => boolean,
 ): ReadonlyMap<EntityId, readonly Reference[]> {
   const containerOf = new Map<EntityId, EntityId | undefined>();
   for (const node of eachNode(current)) containerOf.set(node.id, node.z);
   for (const config of eachConfig(current)) containerOf.set(config.id, config.z);
   for (const group of eachGroup(current)) containerOf.set(group.id, group.z);
 
-  const isOurs = (from: EntityId): boolean => {
-    if (ownedEntities.has(from)) return true;
+  const mine = (from: EntityId): boolean => {
+    if (isOurs(from)) return true;
     const container = containerOf.get(from);
-    return container !== undefined && owned.has(container);
+    return container !== undefined && containers.has(container) && isOurs(container);
   };
 
   const foreign = new Map<EntityId, readonly Reference[]>();
   for (const [id, references] of inboundReferences(current, palette)) {
-    const outside = references.filter((reference) => !isOurs(reference.from));
+    const outside = references.filter((reference) => !mine(reference.from));
     if (outside.length > 0) foreign.set(id, outside);
   }
   return foreign;
@@ -539,7 +601,11 @@ function renameContainer(container: Container, id: EntityId): Container {
 // Emission diffing
 // ---------------------------------------------------------------------------------------------
 
-function byId(entries: readonly Record<string, unknown>[]): Map<EntityId, Record<string, unknown>> {
+/**
+ * Exported for `io/diff.ts`: the comparison of two emitted documents is one algorithm, and a
+ * second copy of it would eventually disagree about what "changed" means.
+ */
+export function entriesById(entries: readonly Record<string, unknown>[]): Map<EntityId, Record<string, unknown>> {
   const map = new Map<EntityId, Record<string, unknown>>();
   for (const entry of entries) {
     const id = entry['id'];
@@ -551,7 +617,7 @@ function byId(entries: readonly Record<string, unknown>[]): Map<EntityId, Record
 const GEOMETRY_KEYS = new Set(['x', 'y', 'w', 'h']);
 
 /** Entity id → what changed about it, for every entity whose emitted form differs. */
-function diffAll(
+export function diffEmittedEntries(
   current: ReadonlyMap<EntityId, Record<string, unknown>>,
   payload: ReadonlyMap<EntityId, Record<string, unknown>>,
   diffGeometry: boolean,

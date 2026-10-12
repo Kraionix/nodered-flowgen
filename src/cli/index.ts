@@ -21,9 +21,10 @@ import { readFile } from 'node:fs/promises';
 
 import { parseArgv, flag, GLOBAL_OPTIONS, renderUsage, rejectPositionals, type OptionSpec, type ParsedArgs } from './args.ts';
 import { createContext, type CliContext, type CliIo } from './context.ts';
-import { CliFailure, EXIT, UsageError, EXIT_DESCRIPTIONS, type ExitCode } from './exit.ts';
+import { classifyFailure, EXIT, EXIT_DESCRIPTIONS, UsageError, type ExitCode } from './exit.ts';
 import { renderHuman, renderJson, type CommandResult } from './output.ts';
 import { APPLY_OPTIONS, APPLY_USAGE, applyCommand } from './commands/apply.ts';
+import { DIFF_OPTIONS, DIFF_USAGE, diffCommand } from './commands/diff.ts';
 import { IMPORT_OPTIONS, IMPORT_USAGE, importCommand } from './commands/import.ts';
 import { INIT_OPTIONS, INIT_USAGE, initCommand } from './commands/init.ts';
 import { PALETTE_CHECK_OPTIONS, PALETTE_CHECK_USAGE, paletteCheckCommand } from './commands/paletteCheck.ts';
@@ -79,6 +80,13 @@ const COMMANDS: readonly CommandSpec[] = [
     usage: IMPORT_USAGE,
     options: IMPORT_OPTIONS,
     run: importCommand,
+  },
+  {
+    path: ['diff'],
+    summary: 'compare two flow sets — a file, an instance or a receipt — semantically',
+    usage: DIFF_USAGE,
+    options: DIFF_OPTIONS,
+    run: diffCommand,
   },
   {
     path: ['validate'],
@@ -142,7 +150,7 @@ export async function runCli(options: RunOptions): Promise<ExitCode> {
     command = resolve(context, argv);
     result = command.immediate ?? (await (command.run as () => Promise<CommandResult>)());
   } catch (cause) {
-    const failure = classify(cause);
+    const failure = classifyFailure(cause);
     // A scan of the raw argv, only when nothing was parsed: `--no-json` and the `--` terminator
     // both fooled a plain `argv.includes`, and both are handled here.
     const json = command?.args === undefined ? scanFlag(argv, 'json') : flag(command.args, 'json');
@@ -282,16 +290,6 @@ export function renderHelp(): string {
     `run \`${PROGRAM} <command> --help\` for the options of one command.`,
   );
   return lines.join('\n');
-}
-
-function classify(cause: unknown): { exitCode: ExitCode; message: string; hint?: string } {
-  if (cause instanceof UsageError) {
-    return { exitCode: EXIT.usage, message: cause.message, ...(cause.hint === undefined ? {} : { hint: cause.hint }) };
-  }
-  if (cause instanceof CliFailure) {
-    return { exitCode: cause.exitCode, message: cause.message, ...(cause.hint === undefined ? {} : { hint: cause.hint }) };
-  }
-  return { exitCode: EXIT.internal, message: `internal error: ${cause instanceof Error ? cause.message : String(cause)}` };
 }
 
 function commandName(argv: readonly string[]): string {

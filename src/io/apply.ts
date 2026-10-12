@@ -9,7 +9,7 @@
  */
 
 import { emitFlowSet } from '../emit/flowJson.ts';
-import type { FlowSet } from '../model/entities.ts';
+import type { EntityId, FlowSet } from '../model/entities.ts';
 import type { PaletteType } from '../palette/model.ts';
 import type { Problem } from '../diagnostics/index.ts';
 import { hasErrors } from '../diagnostics/index.ts';
@@ -35,6 +35,8 @@ export interface ApplyOptions {
   /** Bounded retries when the revision moved under us. */
   /** Give a container a fresh id when its id already exists on the instance and is not ours. */
   readonly reassign?: boolean;
+  /** Containers that already exist on the target and that this run takes ownership of. */
+  readonly adopt?: readonly EntityId[];
   readonly maxRetries?: number;
   /** Write the reverse operation here so `rollback` can undo this deploy. */
   readonly receiptPath?: string;
@@ -74,6 +76,7 @@ export async function applyDeployment(options: ApplyOptions): Promise<ApplyResul
         palette: options.palette,
         owned: options.owned,
         ownedEntities: options.ownedEntities ?? new Set(),
+        ...(options.adopt === undefined ? {} : { adopt: options.adopt }),
         problems,
       }),
       rev: '',
@@ -104,10 +107,26 @@ export async function applyDeployment(options: ApplyOptions): Promise<ApplyResul
       palette: options.palette,
       owned: options.owned,
       ownedEntities: options.ownedEntities ?? new Set(),
+      ...(options.adopt === undefined ? {} : { adopt: options.adopt }),
       ...(options.prune === undefined ? {} : { prune: options.prune }),
       ...(options.reassign === true ? { reassign: true } : {}),
       problems,
     });
+
+    // A plan with errors describes a write that must not happen: an id collision leaves our
+    // container out of the payload entirely, so continuing would report a successful deploy of a
+    // flow set the sources did not ask for. This is checked before the dry-run exit, because a dry
+    // run is exactly where a reviewer expects to see it.
+    const planErrors = plan.problems.filter((problem) => problem.severity === 'error');
+    if (planErrors.length > 0) {
+      return {
+        applied: false,
+        reason: 'validation',
+        plan,
+        rev: state.rev,
+        message: `refusing to deploy: the plan has ${planErrors.length} error(s)`,
+      };
+    }
 
     if (options.dryRun === true) {
       return { applied: false, reason: 'no-op', plan, rev: state.rev, message: 'dry run: nothing was written' };
@@ -204,7 +223,17 @@ function abortFromError(cause: unknown, fallback: ApplyAbortReason, plan: Deploy
 }
 
 function emptyPlan(): DeploymentPlan {
-  return { target: '', rev: '', payload: { subflows: [], configs: [], flows: [], loose: [], modules: {} }, operations: [], unowned: [], deletions: [], notes: [], problems: [] };
+  return {
+    target: '',
+    rev: '',
+    payload: { subflows: [], configs: [], flows: [], loose: [], modules: {} },
+    operations: [],
+    unowned: [],
+    adopted: [],
+    deletions: [],
+    notes: [],
+    problems: [],
+  };
 }
 
 function describePlan(plan: DeploymentPlan): readonly string[] {

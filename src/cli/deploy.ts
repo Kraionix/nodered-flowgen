@@ -19,12 +19,14 @@ import type { PaletteSnapshot } from '../palette/snapshot.ts';
 import { samePaletteContent } from '../palette/snapshot.ts';
 import type { Problem } from '../diagnostics/index.ts';
 
-import { CliFailure, EXIT } from './exit.ts';
+import { classifyFailure, CliFailure, EXIT, UsageError, type ExitCode } from './exit.ts';
+import { lines, type CommandResult } from './output.ts';
 import { loadLivePalette } from './palette.ts';
-import { adminClientFor, ownership, type Prepared, type ResolvedTarget } from './pipeline.ts';
+import { adminClientFor, ownership, resolveTarget, type Prepared, type ResolvedTarget } from './pipeline.ts';
 import type { CliContext } from './context.ts';
-import type { OptionSpec } from './args.ts';
+import type { OptionSpec, ParsedArgs } from './args.ts';
 import type { Project } from './project.ts';
+import type { SkippedValidator } from '../validate/report.ts';
 
 export const TARGET_OPTIONS: readonly OptionSpec[] = [
   { name: 'target', kind: 'string', alias: 't', placeholder: '<name>', description: 'configured target to talk to' },
@@ -46,6 +48,8 @@ export interface PlanOptions {
   readonly diffGeometry: boolean;
   /** Deploy a container under a fresh id when its id already exists on the target. */
   readonly reassign?: boolean;
+  /** Containers that already exist on the target and that this run takes ownership of. */
+  readonly adopt?: readonly string[];
 }
 
 /** Reads the instance, parses what is there, and plans the merge. Read-only. */
@@ -81,6 +85,7 @@ export async function planAgainstTarget(
     ownedEntities: ids,
     prune: options.prune,
     ...(options.reassign === true ? { reassign: true } : {}),
+    ...(options.adopt === undefined ? {} : { adopt: options.adopt }),
     diffGeometry: options.diffGeometry,
     problems: prepared.report.problems,
   });
@@ -188,4 +193,116 @@ export function appliedSummary(plan: DeploymentPlan): string {
     .filter(([kind, count]) => count > 0 && kind !== 'leave-alien' && kind !== 'keep-config')
     .map(([kind, count]) => `${kind} ${count}`);
   return counts.length === 0 ? 'deployed: nothing needed changing' : `deployed: ${counts.join(', ')}`;
+}
+
+// ---------------------------------------------------------------------------------------------
+// More than one target
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * One target's outcome, before it is folded into a command result.
+ *
+ * `plan` and `apply` were written as one command = one target. `--all-targets` turns them into a
+ * loop, and a loop needs the per-target facts separately: its own exit code, its own diagnostics
+ * and its own payload, or the summary cannot say which instance failed.
+ */
+export interface TargetOutcome {
+  readonly name: string;
+  readonly url: string;
+  readonly exitCode: ExitCode;
+  readonly diagnostics: readonly Problem[];
+  readonly skipped?: readonly SkippedValidator[];
+  /** Human narration, one entry per line. */
+  readonly messages: readonly string[];
+  readonly data: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * The targets a command runs against.
+ *
+ * `--all-targets` means "every configured target, in name order"; naming one as well is a usage
+ * error rather than a preference, because the two answers cannot both be right. With neither, the
+ * single target every other command resolves is used — so nothing changes for the common case.
+ */
+export function selectedTargets(
+  context: CliContext,
+  project: Project,
+  args: ParsedArgs,
+  request: { readonly target?: string | undefined; readonly url?: string | undefined; readonly token?: string | undefined; readonly tokenEnv?: string | undefined; readonly profile?: string | undefined },
+): readonly ResolvedTarget[] {
+  const all = flagAll(args);
+  if (!all) return [resolveTarget(context, project, request)];
+
+  if (request.target !== undefined || request.url !== undefined) {
+    throw new UsageError(
+      '--all-targets and --target/--url are alternatives',
+      '--all-targets already names every configured target; drop the other option',
+    );
+  }
+
+  const names = Object.keys(project.config.targets).sort();
+  if (names.length === 0) {
+    throw new UsageError('--all-targets was given, but no targets are configured', 'add targets to flowgen.config.ts');
+  }
+  return names.map((name) => resolveTarget(context, project, { target: name, ...(request.profile === undefined ? {} : { profile: request.profile }) }));
+}
+
+function flagAll(args: ParsedArgs): boolean {
+  const values = args.options.get('all-targets');
+  return values !== undefined && values[values.length - 1] !== 'false';
+}
+
+/**
+ * Folds per-target outcomes into one result.
+ *
+ * The exit code is the **highest** of the targets, which is the conservative reading of "did the
+ * fan-out work": a failure is never hidden behind a success. Nothing is aborted early — a deploy
+ * that stops at the first failure leaves the instances after it stale, and every apply writes its
+ * own receipt, so the ones that did run are recoverable on their own.
+ */
+/**
+ * A target that failed inside the fan-out, as an outcome instead of an exception.
+ *
+ * `--all-targets` runs every configured target and reports each one, so a single unreachable
+ * instance cannot leave the rest undeployed. The classification is the same function the CLI's
+ * top-level handler uses, which is what keeps "failed alone" and "failed in a loop" identical.
+ */
+export function failureOutcome(target: ResolvedTarget, cause: unknown): TargetOutcome {
+  const failure = classifyFailure(cause);
+  return {
+    name: target.name,
+    url: target.url,
+    exitCode: failure.exitCode,
+    diagnostics: [],
+    messages: lines(failure.message, failure.hint === undefined ? null : `hint: ${failure.hint}`),
+    data: { target: target.name, url: target.url, failed: failure.message },
+  };
+}
+
+export function combineOutcomes(command: string, outcomes: readonly TargetOutcome[]): CommandResult {
+  const [only] = outcomes;
+  if (outcomes.length === 1 && only !== undefined) {
+    return {
+      command,
+      exitCode: only.exitCode,
+      diagnostics: only.diagnostics,
+      ...(only.skipped === undefined ? {} : { skipped: only.skipped }),
+      messages: only.messages,
+      data: only.data,
+    };
+  }
+
+  const failed = outcomes.filter((outcome) => outcome.exitCode !== EXIT.ok);
+  return {
+    command,
+    exitCode: outcomes.reduce<ExitCode>((worst, outcome) => (outcome.exitCode > worst ? outcome.exitCode : worst), EXIT.ok),
+    diagnostics: outcomes.flatMap((outcome) => outcome.diagnostics),
+    skipped: outcomes.flatMap((outcome) => outcome.skipped ?? []),
+    messages: lines(
+      `${outcomes.length} target(s): ${failed.length === 0 ? 'all ok' : `${failed.length} failed (${failed.map((outcome) => outcome.name).join(', ')})`}`,
+      ...outcomes.flatMap((outcome) => [`-- target "${outcome.name}" at ${outcome.url}`, ...outcome.messages.map((message) => `   ${message}`)]),
+      'note: each target was attempted; the exit code is the highest of them',
+    ),
+    data: { targets: outcomes.map((outcome) => outcome.data), count: outcomes.length, failed: failed.map((outcome) => outcome.name) },
+  };
 }
