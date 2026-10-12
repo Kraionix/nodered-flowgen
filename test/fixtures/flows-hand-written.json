@@ -1,0 +1,39 @@
+[
+  { "id": "t1", "type": "tab", "label": "Hand written", "disabled": false, "info": "" },
+  {
+    "id": "i1",
+    "type": "inject",
+    "z": "t1",
+    "name": "tick",
+    "topic": "hand",
+    "payload": "1",
+    "payloadType": "num",
+    "x": 100,
+    "y": 100,
+    "wires": [["f1"]]
+  },
+  {
+    "id": "f1",
+    "type": "function",
+    "z": "t1",
+    "name": "work",
+    "func": "return msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "x": 300,
+    "y": 100,
+    "wires": [["d1"]]
+  },
+  {
+    "id": "d1",
+    "type": "debug",
+    "z": "t1",
+    "name": "out",
+    "active": true,
+    "complete": "payload",
+    "l": false,
+    "x": 500,
+    "y": 100,
+    "wires": []
+  }
+]

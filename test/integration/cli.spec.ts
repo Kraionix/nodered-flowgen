@@ -95,6 +95,14 @@ after(async () => {
   if (project !== undefined) await rm(project, { recursive: true, force: true });
 });
 
+/** The lockfile as it stands on disk; several tests assert on what import did and did not record. */
+async function readLockfile(): Promise<{ ids: Record<string, string>; owned: Record<string, { containers: string[] }> }> {
+  return JSON.parse(await readFile(path.join(project, '.flowgen.lock.json'), 'utf8')) as {
+    ids: Record<string, string>;
+    owned: Record<string, { containers: string[] }>;
+  };
+}
+
 test('palette pull writes a snapshot and a second pull is a no-op', async () => {
   const first = await cli('palette', 'pull');
   assert.equal(first.code, 0, first.stderr);
@@ -193,4 +201,105 @@ test('rollback puts the instance back exactly as the receipt recorded it', async
 
   const gone = await fetch(`${instance.url}/flowgen/ping`);
   assert.notEqual(gone.status, 200, 'the endpoint the rollback removed no longer answers');
+});
+
+/**
+ * `import`: the other direction. It runs here rather than in its own spec because the palette it
+ * needs is the one this project already pulled, and because `--url` needs something deployed to
+ * read back — the flow set `apply` wrote a moment ago.
+ */
+test('import turns an existing flow file into sources and records the ids it had', async () => {
+  const fixture = path.join(REPO_ROOT, 'test', 'fixtures', 'flows-recon-demo.json');
+  const imported = await cli('import', '--from', fixture, '--out', 'src/imported.ts', '--json');
+  assert.equal(imported.code, 0, imported.stdout + imported.stderr);
+
+  const envelope = JSON.parse(imported.stdout) as {
+    exitCode: number;
+    report: { printed: number; untyped: number; comments: number; dropped: number };
+    ids: { written: boolean; count: number; conflicts: string[] };
+    sources: { path: string; status: string }[];
+  };
+  assert.equal(envelope.exitCode, 0);
+  assert.equal(envelope.report.untyped, 0, 'the instance the palette came from knows every type here');
+  assert.equal(envelope.report.dropped, 0);
+  assert.deepEqual(envelope.sources, [{ path: 'src/imported.ts', status: 'written' }]);
+  assert.equal(envelope.ids.written, true);
+
+  const source = await readFile(path.join(project, 'src', 'imported.ts'), 'utf8');
+  assert.match(source, /export default defineFlowSet\(\(f\) => \{/);
+  assert.match(source, /const scale_x_factor = f\.subflow\(/);
+  assert.match(source, /\.instance\(scale_x_factor, \{/);
+  assert.match(source, /broker: unused_autoconnect_off/, 'a reference is a handle, not an id');
+
+  const lockfile = await readLockfile();
+  assert.equal(lockfile.ids['tab:recon_generated'], 'tab_1', 'the id the file had is the id it keeps');
+  assert.equal(lockfile.ids['subflow:scale_x_factor'], 'scale_sf_1');
+  assert.deepEqual(lockfile.owned['local']?.containers, ['main'], 'importing claims no ownership');
+
+  const again = await cli('import', '--from', fixture, '--out', 'src/imported.ts');
+  assert.equal(again.code, 0, again.stdout + again.stderr);
+  assert.match(again.stdout, /1 file\(s\) unchanged/);
+  assert.match(again.stdout, /ids already recorded/);
+});
+
+test('import leaves a lockfile key that already means something else alone', async () => {
+  const lockfilePath = path.join(project, '.flowgen.lock.json');
+  const before = JSON.parse(await readFile(lockfilePath, 'utf8')) as { ids: Record<string, string> };
+  before.ids['tab:recon_generated'] = 'somebody_elses_tab';
+  await writeFile(lockfilePath, `${JSON.stringify(before, null, 2)}\n`, 'utf8');
+
+  const fixture = path.join(REPO_ROOT, 'test', 'fixtures', 'flows-recon-demo.json');
+  const imported = await cli('import', '--from', fixture, '--out', 'src/imported.ts', '--json');
+  assert.equal(imported.code, 0, imported.stdout + imported.stderr);
+  const envelope = JSON.parse(imported.stdout) as { ids: { conflicts: string[] } };
+  assert.deepEqual(envelope.ids.conflicts, ['tab:recon_generated']);
+
+  const after = await readLockfile();
+  assert.equal(after.ids['tab:recon_generated'], 'somebody_elses_tab', 'the existing meaning is preserved');
+});
+
+test('import --ids writes the id record where it is asked to', async () => {
+  const fixture = path.join(REPO_ROOT, 'test', 'fixtures', 'flows-recon-demo.json');
+  const imported = await cli('import', '--from', fixture, '--ids', 'src/imported.ids.json');
+  assert.equal(imported.code, 0, imported.stdout + imported.stderr);
+  assert.match(imported.stdout, /ids written to src\/imported\.ids\.json/);
+  assert.match(imported.stdout, /const scale_x_factor = f\.subflow\(/, 'the sources go to stdout by default');
+
+  const fragment = JSON.parse(await readFile(path.join(project, 'src', 'imported.ids.json'), 'utf8')) as {
+    lockVersion: number;
+    ids: Record<string, string>;
+  };
+  assert.equal(fragment.lockVersion, 1);
+  assert.equal(fragment.ids['tab:recon_generated'], 'tab_1');
+});
+
+test('import --url reads back what the instance is running', async () => {
+  // Nothing is deployed at this point in the lifecycle: the rollback above emptied the instance,
+  // so deploy the project again and import it back.
+  const applied = await cli('apply', '--no-receipt');
+  assert.equal(applied.code, 0, applied.stdout + applied.stderr);
+
+  const imported = await cli('import', '--url', instance.url, '--token-env', 'NR_TOKEN', '--out', 'src/deployed.ts', '--json');
+  assert.equal(imported.code, 0, imported.stdout + imported.stderr);
+  const envelope = JSON.parse(imported.stdout) as { materialised: { filled: number }; ids: { conflicts: string[] } };
+  assert.deepEqual(envelope.ids.conflicts, [], 'the ids of the deployed tab are already ours');
+
+  const source = await readFile(path.join(project, 'src', 'deployed.ts'), 'utf8');
+  assert.match(source, /const main = f\.flow\("main", \{ label: "Main"/);
+  assert.match(source, /http_in|get_flowgen_ping/, 'the deployed nodes are in the sources');
+});
+
+test('import refuses what it cannot import, and says why', async () => {
+  const missing = await cli('import');
+  assert.equal(missing.code, 2, missing.stdout + missing.stderr);
+  assert.match(missing.stderr, /nothing to import/);
+
+  await writeFile(path.join(project, 'not-a-flow.json'), '{"flow": true}', 'utf8');
+  const notAFlow = await cli('import', '--from', 'not-a-flow.json');
+  assert.equal(notAFlow.code, 2, notAFlow.stdout + notAFlow.stderr);
+  assert.match(notAFlow.stderr, /is not a flow file/);
+
+  const both = await cli('import', '--from', 'not-a-flow.json', '--url', instance.url);
+  assert.equal(both.code, 2);
+  assert.match(both.stderr, /--from and --url are alternatives/);
 });

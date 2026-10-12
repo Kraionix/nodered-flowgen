@@ -1,0 +1,52 @@
+[
+  {
+    "id": "tabx",
+    "type": "tab",
+    "label": "Unknowns",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "weird1",
+    "type": "acme-thing",
+    "z": "tabx",
+    "name": "weird",
+    "threshold": 3,
+    "nest": { "id": "a", "type": "b" },
+    "x": 100,
+    "y": 100,
+    "wires": [["weird2"]]
+  },
+  {
+    "id": "weird2",
+    "type": "acme-thing",
+    "z": "tabx",
+    "name": "weird two",
+    "credentials": { "token": "" },
+    "x": 300,
+    "y": 100,
+    "wires": []
+  },
+  {
+    "id": "link1",
+    "type": "link out",
+    "z": "tabx",
+    "name": "send",
+    "mode": "link",
+    "links": ["link2"],
+    "x": 100,
+    "y": 200,
+    "wires": []
+  },
+  {
+    "id": "link2",
+    "type": "link in",
+    "z": "tabx",
+    "name": "receive",
+    "mode": "link",
+    "links": [],
+    "x": 300,
+    "y": 200,
+    "wires": []
+  }
+]

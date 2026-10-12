@@ -24,6 +24,7 @@ import { createContext, type CliContext, type CliIo } from './context.ts';
 import { CliFailure, EXIT, UsageError, EXIT_DESCRIPTIONS, type ExitCode } from './exit.ts';
 import { renderHuman, renderJson, type CommandResult } from './output.ts';
 import { APPLY_OPTIONS, APPLY_USAGE, applyCommand } from './commands/apply.ts';
+import { IMPORT_OPTIONS, IMPORT_USAGE, importCommand } from './commands/import.ts';
 import { INIT_OPTIONS, INIT_USAGE, initCommand } from './commands/init.ts';
 import { PALETTE_CHECK_OPTIONS, PALETTE_CHECK_USAGE, paletteCheckCommand } from './commands/paletteCheck.ts';
 import { PALETTE_PULL_OPTIONS, PALETTE_PULL_USAGE, palettePullCommand } from './commands/palettePull.ts';
@@ -71,6 +72,13 @@ const COMMANDS: readonly CommandSpec[] = [
     usage: TYPES_GEN_USAGE,
     options: TYPES_GEN_OPTIONS,
     run: typesGenCommand,
+  },
+  {
+    path: ['import'],
+    summary: 'turn an existing flow file or instance into sources, ids included',
+    usage: IMPORT_USAGE,
+    options: IMPORT_OPTIONS,
+    run: importCommand,
   },
   {
     path: ['validate'],

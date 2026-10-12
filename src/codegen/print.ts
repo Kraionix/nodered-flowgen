@@ -134,6 +134,8 @@ class Printer {
   readonly #declared = new Set<string>();
   /** Entity id → the variable its handle or node is bound to, for references and port links. */
   readonly #variables = new Map<EntityId, string>();
+  /** Entities whose handle something else reads, so their creation needs a name. */
+  #used: ReadonlySet<EntityId> = new Set();
   /** Subflow definition id → the variable its handle is bound to. */
   readonly #definitions = new Map<EntityId, string>();
   /** Group id → the variable its handle is bound to, so its members are created through it. */
@@ -149,6 +151,7 @@ class Printer {
   }
 
   print(): PrintResult {
+    this.#used = this.#usedIds();
     const root: Scope = { id: '', ref: 'f', pad: 2 };
     this.#lines.push(`import { defineFlowSet${this.#usesParams() ? ', P' : ''} } from '${this.#options.moduleName ?? DEFAULT_MODULE}';`);
     this.#lines.push('');
@@ -224,6 +227,55 @@ class Printer {
     return this.#allNodes().some((node) => (node.env?.length ?? 0) > 0);
   }
 
+  /**
+   * Which handles something else reads.
+   *
+   * A `const` nobody reads is a compile error in any project with `noUnusedLocals`, so a container
+   * or config node whose handle is never used is created as a plain statement instead. What counts
+   * as "used" is deliberately generous — any property value that happens to be an entity id counts
+   * — because guessing the other way would leave a reference dangling.
+   */
+  #usedIds(): ReadonlySet<EntityId> {
+    const known = new Set<EntityId>();
+    for (const subflow of this.#flowSet.subflows) known.add(subflow.id);
+    for (const flow of this.#flowSet.flows) known.add(flow.id);
+    for (const group of this.#flowSet.subflows.flatMap((subflow) => subflow.groups)) known.add(group.id);
+    for (const group of this.#flowSet.flows.flatMap((flow) => flow.groups)) known.add(group.id);
+    for (const config of this.#flowSet.configs) known.add(config.id);
+    for (const node of this.#allNodes()) known.add(node.id);
+
+    const used = new Set<EntityId>();
+    const containers: readonly { readonly id: EntityId; readonly nodes: readonly Node[]; readonly configs: readonly ConfigNode[]; readonly groups: readonly Group[] }[] = [
+      ...this.#flowSet.flows,
+      ...this.#flowSet.subflows,
+    ];
+    for (const container of containers) {
+      // A container with contents is created through: its nodes, configs and groups are made with
+      // its handle, so the name is read.
+      if (container.nodes.length + container.configs.length + container.groups.length > 0) used.add(container.id);
+    }
+    for (const node of this.#allNodes()) {
+      if (node.z !== undefined) used.add(node.z);
+      if (node.g !== undefined) used.add(node.g);
+      const definition = subflowDefinitionId(node.type);
+      if (definition !== null) used.add(definition);
+      for (const value of stringsIn(node.props)) if (known.has(value)) used.add(value);
+    }
+    for (const config of this.#configs()) {
+      if (config.z !== undefined && config.z !== '') used.add(config.z);
+      for (const value of stringsIn(config.props)) if (known.has(value)) used.add(value);
+    }
+    return used;
+  }
+
+  #configs(): readonly ConfigNode[] {
+    return [
+      ...this.#flowSet.configs,
+      ...this.#flowSet.subflows.flatMap((subflow) => subflow.configs),
+      ...this.#flowSet.flows.flatMap((flow) => flow.configs),
+    ];
+  }
+
   #allNodes(): readonly Node[] {
     return [
       ...this.#flowSet.subflows.flatMap((subflow) => subflow.nodes),
@@ -251,9 +303,9 @@ class Printer {
   #subflow(subflow: SubflowDef): void {
     this.#printed += 1;
     const keyed = this.#keyOf('subflow:', 'subflow:', subflow.name || 'subflow');
-    const name = this.#name(keyed.key);
+    const name = this.#used.has(subflow.id) ? this.#name(keyed.key) : null;
     this.#ids.set(keyed.lockKey, subflow.id);
-    this.#definitions.set(subflow.id, name);
+    if (name !== null) this.#definitions.set(subflow.id, name);
 
     const options: string[] = [`name: ${this.#string(subflow.name)}`];
     if (subflow.info !== undefined) options.push(`info: ${this.#string(subflow.info)}`);
@@ -269,7 +321,7 @@ class Printer {
       this.#review('credentials are not printed: configure a credential provider instead', 1);
     }
 
-    this.#lines.push(`  const ${name} = f.subflow(${this.#string(keyed.key)},`);
+    this.#lines.push(`  ${name === null ? '' : `const ${name} = `}f.subflow(${this.#string(keyed.key)},`);
     this.#lines.push(`    ${this.#object(options, 4)},`);
     this.#lines.push('    (s) => {');
 
@@ -287,11 +339,11 @@ class Printer {
   #flow(flow: Flow): void {
     this.#printed += 1;
     const keyed = this.#keyOf('tab:', 'tab:', flow.label || flow.id);
-    const name = this.#name(keyed.key);
+    const name = this.#used.has(flow.id) ? this.#name(keyed.key) : null;
     this.#ids.set(keyed.lockKey, flow.id);
-    this.#bind(flow.id, name);
+    if (name !== null) this.#bind(flow.id, name);
 
-    const scope: Scope = { id: flow.id, ref: name, pad: 2 };
+    const scope: Scope = { id: flow.id, ref: name ?? 'f', pad: 2 };
     const options: string[] = [];
     if (flow.label !== '') options.push(`label: ${this.#string(flow.label)}`);
     if (flow.info !== undefined) options.push(`info: ${this.#string(flow.info)}`);
@@ -299,8 +351,8 @@ class Printer {
     if (flow.locked === true) options.push('locked: true');
     if (flow.env !== undefined && flow.env.length > 0) options.push(`env: ${this.#paramsLiteral(flow.env, 4)}`);
 
-    const tail = options.length === 0 ? '' : `, ${this.#object(options, scope.pad)}`;
-    this.#lines.push(`  const ${name} = f.flow(${this.#string(keyed.key)}${tail});`);
+    const tail = options.length === 0 ? '' : `, ${this.#object(options, 2)}`;
+    this.#lines.push(`  ${name === null ? '' : `const ${name} = `}f.flow(${this.#string(keyed.key)}${tail});`);
 
     for (const config of flow.configs) this.#config(config, scope);
     for (const group of flow.groups) this.#group(group, scope);
@@ -311,9 +363,9 @@ class Printer {
   #group(group: Group, scope: Scope): void {
     this.#printed += 1;
     const keyed = this.#keyOf(`group:${scope.id}:`, `group:${scope.id}/`, group.name || 'group');
-    const name = this.#name(keyed.key);
+    const name = this.#used.has(group.id) ? this.#name(keyed.key) : null;
     this.#ids.set(keyed.lockKey, group.id);
-    this.#groups.set(group.id, name);
+    if (name !== null) this.#groups.set(group.id, name);
 
     const options: string[] = [`name: ${this.#string(group.name)}`];
     if (group.style !== undefined) options.push(`style: ${this.#value(group.style, scope.pad + 2)}`);
@@ -326,9 +378,9 @@ class Printer {
     if (geometry.h !== undefined) options.push(`h: ${geometry.h}`);
 
     const pad = ' '.repeat(scope.pad);
-    const line = `${pad}const ${name} = ${scope.ref}.group(${this.#string(keyed.key)}, ${this.#object(options, scope.pad)});`;
-    this.#lines.push(line);
-    this.#bind(group.id, name);
+    const head = name === null ? '' : `const ${name} = `;
+    this.#lines.push(`${pad}${head}${scope.ref}.group(${this.#string(keyed.key)}, ${this.#object(options, scope.pad)});`);
+    if (name !== null) this.#bind(group.id, name);
   }
 
   #config(config: ConfigNode, scope: Scope): void {
@@ -342,7 +394,7 @@ class Printer {
       scoped ? `config:${config.z}/` : 'config:',
       this.#nameSource({ props: config.props, type: config.type }),
     );
-    const name = this.#name(keyed.key);
+    const name = this.#used.has(config.id) ? this.#name(keyed.key) : null;
     this.#ids.set(keyed.lockKey, config.id);
 
     const method = known ? 'config' : 'untypedConfig';
@@ -352,10 +404,11 @@ class Printer {
       ...(keyField === null ? [] : [keyField]),
       ...this.#propFields(config.props, scope.pad, config.type),
     ];
+    const head = name === null ? '' : `const ${name} = `;
     this.#lines.push(
-      `${' '.repeat(scope.pad)}const ${name} = ${scope.ref}.${method}(${this.#string(config.type)}, ${this.#object(fields, scope.pad)}${tail});`,
+      `${' '.repeat(scope.pad)}${head}${scope.ref}.${method}(${this.#string(config.type)}, ${this.#object(fields, scope.pad)}${tail});`,
     );
-    this.#bind(config.id, name);
+    if (name !== null) this.#bind(config.id, name);
   }
 
   // --------------------------------------------------------------------------------------
@@ -788,6 +841,7 @@ class Printer {
   }
 
   #wrap(open: string, fields: readonly string[], close: string, pad: number): string {
+    if (fields.length === 0) return `${open}${close}`;
     const inline = `${open} ${fields.join(', ')} ${close}`;
     if (inline.length + pad <= 100 && !inline.includes('\n')) return inline;
     const inner = ' '.repeat(pad + 2);
@@ -895,6 +949,24 @@ function namesNeeded(node: Node, consumed: ReadonlySet<string>, portLinks: Reado
   return node.wires.some((targets, port) =>
     targets.some((target) => !(port === 0 && targets.length === 1 && consumed.has(edge(node.id, target)))),
   );
+}
+
+/** Every string that appears in a property bag, at any depth. */
+function stringsIn(props: NodeProps): readonly string[] {
+  const found: string[] = [];
+  const walk = (value: unknown, depth: number): void => {
+    if (depth > 6) return;
+    if (typeof value === 'string') {
+      found.push(value);
+      return;
+    }
+    if (value === null || typeof value !== 'object') return;
+    for (const entry of Array.isArray(value) ? value : Object.values(value as Record<string, unknown>)) {
+      walk(entry, depth + 1);
+    }
+  };
+  for (const value of [...Object.values(props.known), ...Object.values(props.extras)]) walk(value, 0);
+  return found;
 }
 
 /** A chain edge, as the printer keys them. */
