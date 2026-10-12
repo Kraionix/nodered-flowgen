@@ -1,0 +1,4 @@
+# Everything here is produced by running the example; only the sources are committed.
+palettes/
+.flowgen/
+.flowgen.lock.json

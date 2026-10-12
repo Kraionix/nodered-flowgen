@@ -11,7 +11,7 @@ import { describePalette } from '../../palette/snapshot.ts';
 import type { Problem } from '../../validate/problem.ts';
 
 import { flag, text, type OptionSpec } from '../args.ts';
-import { EXIT } from '../exit.ts';
+import { EXIT, UsageError } from '../exit.ts';
 import { lines, type CommandResult } from '../output.ts';
 import { loadProject } from '../project.ts';
 import { prepare } from '../pipeline.ts';
@@ -31,18 +31,34 @@ export const VALIDATE_USAGE: readonly string[] = ['validate [options]'];
 
 export async function validateCommand(context: CliContext, args: ParsedArgs): Promise<CommandResult> {
   const project = await loadProject(context, args);
-  const live = flag(args, 'live') || text(args, 'url') !== undefined;
+
+  // The palette always comes from the committed snapshot: a validation that changed its mind
+  // depending on which instance happened to be reachable would not be a gate. `--live` only
+  // grants validators the capability to reach an instance.
+  const live = flag(args, 'live');
+  const liveUrl = text(args, 'url');
+  if (live && liveUrl === undefined) {
+    throw new UsageError('--live needs --url <url>', 'pass the instance validators should reach');
+  }
 
   const prepared = await prepare(context, project, {
     palette: {
       profile: text(args, 'profile'),
       paletteFile: text(args, 'palette'),
-      url: text(args, 'url'),
-      token: text(args, 'token'),
-      tokenEnv: text(args, 'token-env'),
-      offline: !live,
+      offline: true,
     },
-    ...(live ? { target: { name: 'cli', url: text(args, 'url') ?? '', token: text(args, 'token'), profile: text(args, 'profile') ?? project.config.defaultProfile, prune: undefined, readOnly: false } } : {}),
+    ...(live && liveUrl !== undefined
+      ? {
+          target: {
+            name: 'cli',
+            url: liveUrl,
+            token: text(args, 'token'),
+            profile: text(args, 'profile') ?? project.config.defaultProfile,
+            prune: undefined,
+            readOnly: false,
+          },
+        }
+      : {}),
     mode: 'collect',
   });
 

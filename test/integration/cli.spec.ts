@@ -13,7 +13,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test, { after, before } from 'node:test';
@@ -139,10 +139,10 @@ test('validate, plan and apply report the same plan the deploy executes', async 
   );
   assert.equal(plan.palette.liveHash, plan.palette.contentHash, 'the instance matches the pinned palette');
 
-  const applied = await cli('apply');
+  const applied = await cli('apply', '--receipt', '.flowgen/receipts/deploy.json');
   assert.equal(applied.code, 0, applied.stdout + applied.stderr);
   assert.match(applied.stdout, /create-container main/);
-  assert.match(applied.stdout, /receipt: \.flowgen\/receipts\/local-/);
+  assert.match(applied.stdout, /receipt: \.flowgen\/receipts\/deploy\.json/);
 
   const lockfile = JSON.parse(await readFile(path.join(project, '.flowgen.lock.json'), 'utf8')) as {
     owned: Record<string, { containers: string[] }>;
@@ -159,7 +159,9 @@ test('validate, plan and apply report the same plan the deploy executes', async 
 });
 
 test('a second apply changes nothing and --expect-rev refuses a moved revision', async () => {
-  const again = await cli('apply');
+  // `--no-receipt` on purpose: a no-op deploy must not overwrite the receipt that can undo the
+  // real one, and this is the case where that would matter.
+  const again = await cli('apply', '--no-receipt');
   assert.equal(again.code, 0, again.stdout + again.stderr);
   assert.match(again.stdout, /the instance already matched the sources/);
 
@@ -176,9 +178,13 @@ test('palette check passes against the instance it was pulled from', async () =>
 });
 
 test('rollback puts the instance back exactly as the receipt recorded it', async () => {
+  const receipts = await readdir(path.join(project, '.flowgen', 'receipts'));
+  assert.deepEqual(receipts, ['deploy.json'], 'only the deploy that wrote one has a receipt');
+
   const rolled = await cli('rollback', '--last');
   assert.equal(rolled.code, 0, rolled.stdout + rolled.stderr);
   assert.match(rolled.stdout, /rolled back target "local"/);
+  assert.match(rolled.stdout, /restored 0 entries/);
 
   const state = await fetch(`${instance.url}/flows`, {
     headers: { 'node-red-api-version': 'v2', authorization: `Bearer ${env['NR_TOKEN']}` },

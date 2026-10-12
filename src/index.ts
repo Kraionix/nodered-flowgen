@@ -188,6 +188,7 @@ export {
 
 export {
   dashboard,
+  dashboardIn,
   WIDGETS,
   type Dashboard,
   type DashboardBase,

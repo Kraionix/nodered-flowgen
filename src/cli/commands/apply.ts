@@ -103,7 +103,16 @@ export async function applyCommand(context: CliContext, args: ParsedArgs): Promi
     }
   }
 
-  const receiptPath = dryRun || flag(args, 'no-receipt') ? undefined : (text(args, 'receipt') ?? defaultReceiptPath(project.receiptsDir, target, context));
+  // Every path in the CLI resolves against the project root, never against the shell's current
+  // directory: `--receipt` used to be taken verbatim, so a relative path wrote the receipt
+  // wherever the command happened to be run from - losing the undo record of a real deploy.
+  const requestedReceipt = text(args, 'receipt');
+  const receiptPath =
+    dryRun || flag(args, 'no-receipt')
+      ? undefined
+      : requestedReceipt === undefined
+        ? defaultReceiptPath(project.receiptsDir, target, context)
+        : path.resolve(project.root, requestedReceipt);
   const maxRetries = readRetries(text(args, 'max-retries'));
   const { owned, ids } = ownership(project, target);
 
