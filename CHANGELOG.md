@@ -35,6 +35,32 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
 * **Tests** — the round-trip oracle (deploy → read back byte-identical → re-parse → re-emit to a
   fixed point), a runtime probe through a real Node-RED, pinned palette fixtures for 5.0.7 and
   5.0.8, and the seven prior-art defects as negative fixtures.
+* **`flowgen import`** — read a flow file (`--from`) or a live instance and print the TypeScript
+  that could have produced it, with the authoring keys and the ids it used. The printer is held to
+  the round-trip rule mechanically: `emit(build(print(ir), { lockfile: ids }))` has to equal
+  `emit(ir)` byte for byte, and the acceptance fixtures pass it (an editor export, a hand-written
+  file, the project's own example).
+* **Subflow libraries** — `defineSubflowLibrary`, `subflows` and `f.subflowFrom(library)` define a
+  reusable subflow without a builder attached, for a second module or a shared package. Each
+  declaration goes through the ordinary `subflow()` path, so ids, lockfile keys and the palette
+  overlay are unchanged.
+* **A validator environment instead of a capability set.** `ValidatorEnvironment` carries the
+  *ports* (`liveInstance`, `nrlint`, `runtimeProbe`, `credentials`) and `requires` names the keys a
+  validator must have, so the skip list is a derivation rather than a second declaration that can
+  disagree with reality. Two checks landed on it: `deploy/missing-types` (a node type the target
+  cannot register — one problem per type, not per widget) and `credentials/no-provider` (a warning,
+  and only when the flow set actually carries credential values).
+* **`materialiseDefaults`** — fills palette defaults that are declared literals, which is what makes
+  a rebuild comparable with a hand-written flow file that never contained them. A computed default
+  (`switch.outputs`) is never invented.
+* **A tiered public surface.** One entry point, four tiers — authoring, palette, diagnostics,
+  testing — documented in the README and enforced from a consumer's position: one compile fixture
+  per tier under `test/types/tiers/`, compiled again against the packed tarball by
+  `test/integration/packaging.spec.ts`. What the CLI needs and a consumer must not reach
+  (`Builder`, the HTML extractors, the generated-file layout, the id counter, config resolution, the
+  whole deploy path) moved to `src/internal.ts`, which is not in `exports`: importing
+  `@kraionix/nodered-flowgen/internal` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`, and a negative
+  type fixture asserts it. `test/unit/layers.test.ts` keeps the two barrels disjoint.
 
 ### Changed
 
@@ -73,6 +99,18 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
   `exitCodeFor()` are unchanged and still exported from the package root; only the import path
   inside the repository moved. `test/unit/layers.test.ts` now reads every relative import under
   `src/` and fails when one points at a higher layer, so the story cannot drift again.
+* **The builder was split, and wiring stopped being quadratic.** `Builder` kept one array and did a
+  `findIndex` over every node per wire, copying the whole `wires` array on each connection. `NodeTable`
+  now owns the array (still the authority for emission order) plus an `id → index` map, and
+  `IdRegistry` owns key → id, lockfile precedence and the `key#2` spelling `flowgen import` has to
+  predict. Measured on one flow set of 20 000 nodes / 40 000 wires: **528 ms** now, **4 693 ms**
+  before, against a 2 000 ms budget in `test/unit/builder-perf.test.ts`.
+* **`global-config` is a facet, not a config node.** The entry carries the manifest (`env` hints and
+  the module list) and an id that an editor export may have chosen, so `FlowSet.manifest = { id, env }`
+  with one writer (`emitGlobalConfig`) replaced a `ConfigNode` that lost its `env` and could be
+  emitted twice.
+* **`PaletteParameter.ui` is optional.** The snapshot format omits it when the editor declared none,
+  so requiring it made a hand-written overlay's parameter list uncompilable.
 
 ### Fixed
 
@@ -148,6 +186,19 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
   example's `work` node was one of them.
 * The type-fixture harness dropped every indented continuation line of a TypeScript diagnostic, so
   the half of the message that names the property to add was never asserted. It is parsed now.
+* **Subflow credentials survived an import.** `parseSubflow` dropped the definition's
+  `credentials` bag, so importing a subflow that declares one lost it on the way back out.
+* **The printer recorded the ids it used, wrote every config's `key`, kept group membership and kept
+  chains in order.** Found while building the round-trip oracle, which is the only reason it exists:
+  node ids were never recorded (so a re-import renamed everything), a config without an explicit
+  `key` drifted, group membership was lost unless members were created through `group.node(...)`,
+  and a chain that needed a name for one member reordered wires or referred to an undeclared one.
+  Unused `const`s broke `noUnusedLocals` in the compile gate, so a container or config nothing reads
+  is now a statement rather than a declaration.
+* **`validate --live` resolved its target through `resolveTarget`.** It hand-built one, so
+  `--token-env` and a profile's `tokenEnv` were ignored and a live check against an instance with
+  `adminAuth` silently degraded to a skip — which the new `deploy/missing-types` made visible.
+* **`flowgen import --from` resolves against the project directory**, not `process.cwd()`.
 
 ### Notes
 
@@ -155,6 +206,11 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
   through `prepack`); inside the repository the `.ts` sources stay the entry point, and `paths` in
   `tsconfig.json` keeps the package name resolving to `src/` so the generated palette
   augmentations attach to the sources.
+* The public surface is four tiers of one entry point (`src/index.ts`), plus the pre-existing
+  `@kraionix/nodered-flowgen/toolkit` subpath for the composition helper. `src/internal.ts` is
+  shipped because the CLI imports it; it is not in `exports` and is not part of the contract.
+* A programmatic `plan`/`apply` is deliberately not public: `flowgen plan --json` and
+  `flowgen apply --json` are the machine-readable faces of the deploy path.
 * `nrlint` is not wired into the validation gate: its library API runs no rules without a resolved
   plugin set (verified — a syntactically broken function body lints clean), so a smoke test would
   have asserted nothing.

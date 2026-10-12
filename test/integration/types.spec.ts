@@ -35,8 +35,8 @@ interface Diagnostic {
   readonly message: string;
 }
 
-async function compile(project: string): Promise<{ code: number; diagnostics: readonly Diagnostic[] }> {
-  const child = spawn(process.execPath, [TSC, '--noEmit', '--pretty', 'false', '-p', project], {
+async function runTsc(args: readonly string[]): Promise<{ code: number; output: string }> {
+  const child = spawn(process.execPath, [TSC, ...args], {
     cwd: REPO_ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -50,7 +50,26 @@ async function compile(project: string): Promise<{ code: number; diagnostics: re
     output += chunk;
   });
   const code = await new Promise<number>((resolve) => child.once('close', (exit) => resolve(exit ?? -1)));
+  return { code, output };
+}
+
+async function compile(project: string): Promise<{ code: number; diagnostics: readonly Diagnostic[] }> {
+  const { code, output } = await runTsc(['--noEmit', '--pretty', 'false', '-p', project]);
   return { code, diagnostics: parseDiagnostics(output) };
+}
+
+/**
+ * The files the compiler would actually read, from the resolved project.
+ *
+ * `--showConfig` prints them relative to the directory of the tsconfig, not to the working
+ * directory, so they are resolved before being compared with repository-relative paths.
+ */
+async function projectFiles(project: string): Promise<readonly string[]> {
+  const { code, output } = await runTsc(['--showConfig', '-p', project]);
+  assert.equal(code, 0, `tsc --showConfig failed:\n${output}`);
+  const shown = JSON.parse(output) as { files: readonly string[] };
+  const base = path.dirname(project);
+  return shown.files.map((file) => path.relative(REPO_ROOT, path.resolve(base, file)).split(path.sep).join('/'));
 }
 
 /**
@@ -122,7 +141,23 @@ test('the committed augmentations are exactly what the pinned installation gener
   }
 });
 
-test('the positive fixture compiles with no diagnostics', async () => {
+const TIERS = ['authoring', 'palette', 'diagnostics', 'testing'] as const;
+
+test('every tier has a fixture, and the types project is compiled over all of them', async () => {
+  const files = await projectFiles(path.join(TYPES_DIR, 'tsconfig.json'));
+
+  // Deleting a tier's fixture would otherwise make the positive compile pass by having nothing
+  // left to check, which is the failure mode a fixture suite has to be protected from.
+  for (const tier of TIERS) {
+    assert.ok(
+      files.includes(`test/types/tiers/${tier}.ts`),
+      `no fixture for the ${tier} tier: test/types/tiers/${tier}.ts is not in the project`,
+    );
+  }
+  assert.ok(files.includes('test/types/positive.ts'), 'the generated-palette fixture left the project');
+});
+
+test('the tier fixtures and the generated-palette fixture compile with no diagnostics', async () => {
   const result = await compile(path.join(TYPES_DIR, 'tsconfig.json'));
   assert.deepEqual(result.diagnostics, []);
   assert.equal(result.code, 0);
@@ -139,7 +174,7 @@ test('the negative fixture fails with exactly the expected diagnostics', async (
   assert.equal(result.code, 1);
   assert.deepEqual(
     diagnostics.map((diagnostic) => `${diagnostic.line}:${diagnostic.code}`),
-    ['11:TS2353', '14:TS2322', '17:TS2322', '20:TS2322', '24:TS2820', '27:TS2322'],
+    ['11:TS2353', '14:TS2322', '17:TS2322', '20:TS2322', '24:TS2820', '27:TS2322', '34:TS2305'],
   );
   assert.match(diagnostics[0]?.message ?? '', /'minX' does not exist in type/);
   assert.match(diagnostics[2]?.message ?? '', /"ui_tab"' is not assignable to type '"ui_group"'/);
@@ -149,4 +184,6 @@ test('the negative fixture fails with exactly the expected diagnostics', async (
   assert.match(diagnostics[3]?.message ?? '', /group: Ref<"ui_group">; order\?: number/);
   assert.match(diagnostics[4]?.message ?? '', /Did you mean '"ui_gauge"'/);
   assert.match(diagnostics[5]?.message ?? '', /not assignable to type 'EnvValue'/);
+  // The tiering contract: what lives in `src/internal.ts` is not reachable from the entry point.
+  assert.match(diagnostics[6]?.message ?? '', /Module '"@kraionix\/nodered-flowgen"' has no exported member 'Builder'/);
 });

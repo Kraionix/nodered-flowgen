@@ -101,8 +101,13 @@ export interface PaletteParameter {
   /** Node-RED environment-variable type: `str`, `num`, `bool`, `json`, `cred`, `env`, … */
   readonly type: string;
   readonly value: unknown;
-  /** Editor UI descriptor (valid values, list options); opaque on purpose. */
-  readonly ui: unknown;
+  /**
+   * Editor UI descriptor (valid values, list options); opaque on purpose.
+   *
+   * Optional because the snapshot format omits it when the editor did not declare one — a
+   * hand-written overlay that lists parameters must not have to invent the field to compile.
+   */
+  readonly ui?: unknown;
 }
 
 /** Which parts of a type's declaration were functions rather than literals. */

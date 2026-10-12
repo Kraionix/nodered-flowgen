@@ -162,6 +162,64 @@ palettes/local.md                      # human/agent-readable cheat sheet
 * **Profiles** let one project target several instances (`palette.profiles.<name>`), each with its
   own snapshot, generated types, URL and token environment variable.
 
+## The public surface
+
+One entry point, four tiers. What you import says which question you are answering:
+
+| Tier | The question | Names |
+|---|---|---|
+| **authoring** | "How do I declare my flows and my project?" | `defineConfig`, `defineFlowSet`, the builder's handles and options, `P`, `dashboard`/`dashboardIn`, `layoutFlowSet`, `defineSubflowLibrary`/`subflows` |
+| **palette** | "What does my Node-RED know, and how do I describe the rest?" | the palette model (`PaletteType`, `paletteProperty`, `propertyNames`, `referenceProperties`), the snapshot (`parsePaletteSnapshot`, `serializePaletteSnapshot`, `hashPaletteContent`, `diffPalette`, `describePalette`), and curated knowledge (`overlay`, `withType`, `applyPatch`, `applyOverlays`, `rebuildPalette`) |
+| **diagnostics** | "Is what I built acceptable?" | `Problem` and its codes, the `Validator` contract, `defaultValidators` and the built-in checks, `runValidators` with a `ValidatorEnvironment`, `formatProblems` |
+| **testing** | "How do I assert on the result without an instance?" | the IR (`FlowSet`, `eachNode`, `findNode`, `allIds`), canonical emission (`emitFlowSet`), `parseFlowFile`/`parseFlowSetText`, `normalizeFlowSet`, `materialiseDefaults`, `printFlowSet` |
+
+The rule for the boundary is one sentence: **a name is public when its shape is a decision we can
+defend to a user; it is internal when its shape is dictated by how the CLI works today.** The
+extractors that read Node-RED's registration HTML, the layout of the generated type files, the id
+counter behind the lockfile, the `Builder` class itself, config resolution and the whole deploy path
+(`plan`/`apply`/`rollback`, the lockfile, the receipts) are therefore in `src/internal.ts` — which
+ships, because the CLI is inside the same package, and is **not** reachable:
+
+```ts
+import { planMerge } from '@kraionix/nodered-flowgen/internal';
+// ERR_PACKAGE_PATH_NOT_EXPORTED — `exports` names only `.` and `./toolkit`
+```
+
+A programmatic deploy is deliberately not part of this contract. `flowgen plan --json` and
+`flowgen apply --json` are the machine-readable faces of it, and they are what a pipeline should
+call: ownership, compare-and-swap on `rev` and receipts are the product, and they are cheaper to
+keep compatible behind a documented CLI contract than behind a TypeScript signature.
+
+The tiers are enforced, not documented: `test/types/tiers/` holds one fixture per tier that imports
+*only* the entry point, `test/integration/packaging.spec.ts` compiles all four against the packed
+and installed tarball, and `test/types/negative/negative.ts` fails if an internal name becomes
+reachable. `test/unit/layers.test.ts` keeps the two barrels disjoint.
+
+## Development (`.ts`) versus installed (`dist`)
+
+The repository and a consumer run the same code through different doors, and the difference is
+worth knowing before debugging a build:
+
+|  | In this repository | Installed |
+|---|---|---|
+| Entry point | `src/index.ts` (TypeScript) | `dist/index.js` (compiled, `tsc -p tsconfig.build.json`) |
+| How Node runs it | type stripping, built into Node ≥ 22.18 | ordinary ESM |
+| `@kraionix/nodered-flowgen` resolves to | `src/index.ts`, through `paths` in `tsconfig.json` | `dist/`, through `exports` in `package.json` |
+| Relative imports | `./foo.ts` | rewritten to `./foo.js` at build time |
+| Generated palette files | attach to `src/typing.ts`, through the same `paths` mapping | attach to `dist/index.d.ts` |
+| Build | `npm test` builds first; `npm run typecheck` does not | `prepack` builds, so `npm publish`/`npm pack` cannot ship a stale `dist` |
+
+Two consequences that have bitten this repository already:
+
+* **A package cannot ship its `.ts` sources.** Node refuses to strip types for any file under a
+  `node_modules` path (`ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING`), so `files` lists `dist` and
+  nothing else. 180 tests stayed green while the published package was unimportable because every
+  test imported `../../src/…`; `test/integration/packaging.spec.ts` exists to see what a consumer
+  sees.
+* **`paths` is why the augmentations work in-repo.** A generated `palettes/<profile>.d/*.d.ts` does
+  `declare module '@kraionix/nodered-flowgen'`; if that name resolved to `dist/`, the sources would
+  type-check against an empty palette. If you add an entry point, add it to `paths` too.
+
 ## What is deliberately not here
 
 * **No dependency-injection container.** Extensions are plain values and a ~120-line `Toolkit`
@@ -189,6 +247,7 @@ src/io         admin API client, lockfile, plan/merge, apply, receipts
 src/config     flowgen.config.ts: profiles, targets, layout
 src/toolkit    the composition helper (reversible registration, gated activation)
 src/cli        the flowgen binary
+src/internal   the private barrel: everything above that a consumer must not reach
 ```
 
 Dependencies point inward only, in that order: `result`, `typing`, `diagnostics` and `toolkit`
@@ -212,9 +271,13 @@ npm run test:integration                       # builds, then starts disposable 
   caught (see that directory's README).
 * `test/integration/acceptance.spec.ts` — the milestone-1 acceptance run through the CLI, including
   a runtime probe that only passes if a subflow parameter override reached the instance.
+* `test/types/tiers/` — one compile fixture per public tier, written the way a consumer writes:
+  a single import root. `test/types/negative/negative.ts` is the other half (typos must not
+  compile, and neither must an internal name).
 * `test/integration/packaging.spec.ts` — packs the tarball, installs it into a throwaway
-  `node_modules`, runs the bin, imports the entry point and type-checks a consumer file. It is the
-  only test that can see a package a consumer cannot install.
+  `node_modules`, runs the bin, imports the entry point, proves `/internal` is not exported, and
+  type-checks a consumer file plus all four tier fixtures. It is the only test that can see a
+  package a consumer cannot install.
 
 ## License
 

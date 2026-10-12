@@ -49,9 +49,12 @@ const LAYERS: readonly (readonly string[])[] = [
   ['authoring', 'io'],
   // Project configuration binds authoring and targets together.
   ['config'],
-  // The binary is the only thing allowed to know about all of the above at once.
-  ['cli'],
-  // The public barrel re-exports every layer by design.
+  // The binary is the only thing allowed to know about all of the above at once, and the private
+  // barrel is the same knowledge behind one import. `internal` sits *beside* `cli` rather than
+  // below it because it is not a layer of the product: it is what the CLI and the tests share.
+  ['cli', 'internal'],
+  // The public barrel re-exports every layer by design. It must never import `internal` — that
+  // would publish every mechanism through the back door, and a test below fails if it does.
   ['index'],
 ];
 
@@ -184,4 +187,63 @@ test('the checker reports a violation when there is one', () => {
   assert.deepEqual(findViolations(synthetic).map(describe), [
     'model/normalize.ts:23 — model must not import validate ("../validate/problem.ts")',
   ]);
+});
+
+/**
+ * The public surface is four tiers of one entry point, and the private barrel is unreachable from
+ * it. Both halves are worth a test: a tier can be *deleted* (someone re-exports from the wrong
+ * place) and the boundary can be *bypassed* (someone adds `export * from './internal.ts'` to
+ * `index.ts`, which would make every mechanism public again without touching a single name).
+ */
+test('the public entry point is tiered, and every tier is still there', async () => {
+  const source = await readFile(path.join(SRC, 'index.ts'), 'utf8');
+  const tiers = ['1. authoring', '2. palette', '3. diagnostics', '4. testing'];
+  const missing = tiers.filter((tier) => !source.includes(`// ${tier} `));
+
+  assert.deepEqual(missing, [], `the public surface lost a tier; expected a band for each of ${tiers.join(', ')}`);
+  assert.ok(
+    source.split('\n').length < 400,
+    'index.ts should be a surface, not a catalogue: if a tier needs this much, it needs a file of its own and a documented exception',
+  );
+
+  // The tiers are not decoration: `internal` must not be reachable from the public entry, by
+  // value or by type. A re-export is the only way that can happen, so an import is what is checked.
+  const leaks = importsOf('index.ts', source).filter((entry) => entry.target === 'internal.ts');
+  assert.deepEqual(leaks.map((entry) => entry.specifier), [], 'index.ts re-exports the internals');
+});
+
+test('the private barrel is a real barrel, and shares no name with the public one', async () => {
+  const [publicSurface, internalSurface] = await Promise.all([import('../../src/index.ts'), import('../../src/internal.ts')]);
+
+  // Both are real modules with real values, and importing them proves the private barrel does not
+  // reach for something only the CLI has (a built file, a Node-RED module, the network).
+  assert.ok(Object.keys(publicSurface).length >= 40, 'the public entry point lost its values');
+  assert.ok(Object.keys(internalSurface).length >= 40, 'internal.ts stopped re-exporting the mechanisms');
+
+  // A name in both barrels means the boundary is not real: two import paths for one thing, one of
+  // them a promise. Types are erased at runtime, so the comparison is made on the source — and
+  // both files are `export { … } from '…'` and nothing else, which is what makes that cheap.
+  const names = async (file: string): Promise<readonly string[]> => {
+    const source = await readFile(path.join(SRC, file), 'utf8');
+    const found = new Set<string>();
+    for (const match of source.matchAll(/^export \{([^}]*)\} from /gms)) {
+      for (const entry of (match[1] as string).split(',')) {
+        const name = entry.replace(/^\s*type\s+/, '').trim();
+        if (name !== '') found.add(name);
+      }
+    }
+    assert.ok(found.size >= 40, `only ${found.size} names found in ${file}; the extraction is wrong`);
+    return [...found].sort();
+  };
+
+  const [publicNames, internalNames] = await Promise.all([names('index.ts'), names('internal.ts')]);
+  const shared = internalNames.filter((name) => publicNames.includes(name));
+  assert.deepEqual(shared, [], `these names are exported from both barrels: ${shared.join(', ')}`);
+
+  // A sample of what the boundary is for, asserted by name so that a rename is a red test rather
+  // than a silent widening of the contract.
+  for (const name of ['Builder', 'emitTypes', 'filesystemSource', 'planMerge', 'createIdAllocator']) {
+    assert.ok(internalNames.includes(name), `${name} left internal.ts`);
+    assert.ok(!publicNames.includes(name), `${name} became public without a decision`);
+  }
 });

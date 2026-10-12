@@ -25,6 +25,7 @@
   },
   "include": [
     "positive.ts",
+    "tiers/**/*.ts",
     "palettes/**/*.d.ts"
   ]
 }

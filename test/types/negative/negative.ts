@@ -25,3 +25,10 @@ export const unknownTypeName: KnownType = 'ui_gaug';
 
 // An environment value that cannot be stored in a flow file.
 export const wrongEnvValue: EnvValue = { nested: true };
+
+// The private barrel is not the public one. `Builder`, `emitTypes`, `filesystemSource`,
+// `planMerge` and `createIdAllocator` all exist — in `src/internal.ts`, which `package.json`
+// does not export. Importing one from the entry point has to fail here, or the tiering is a
+// comment rather than a contract; `packaging.spec.ts` checks the subpath itself, which is the
+// other half (`@kraionix/nodered-flowgen/internal` → ERR_PACKAGE_PATH_NOT_EXPORTED).
+import { Builder } from '@kraionix/nodered-flowgen';

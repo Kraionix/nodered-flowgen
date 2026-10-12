@@ -21,7 +21,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -148,12 +148,28 @@ console.log(entries.map((entry) => entry.id + ':' + entry.type).join(','));
     assert.equal(imported.code, 0, `importing the installed package failed:\n${imported.stderr}`);
     assert.match(imported.stdout, /main:tab/);
     assert.match(imported.stdout, /tick:inject/);
+
+    // The other half of the tiering contract: the private barrel is *shipped* (the CLI inside the
+    // package imports it) and must still be unreachable, because `exports` is what decides.
+    await writeFile(
+      path.join(consumer, 'internal-probe.mjs'),
+      `try {
+  await import(${JSON.stringify(`${PACKAGE_NAME}/internal`)});
+  console.log('imported');
+} catch (error) {
+  console.log(error.code ?? error.message);
+}
+`,
+      'utf8',
+    );
+    const probe = await run(process.execPath, ['internal-probe.mjs'], { cwd: consumer });
+    assert.equal(probe.stdout.trim(), 'ERR_PACKAGE_PATH_NOT_EXPORTED', `the internals are importable: ${probe.stdout}`);
   } finally {
     await rm(consumer, { recursive: true, force: true });
   }
 });
 
-test('the published declarations type-check a consumer file', async () => {
+test('the published declarations type-check a consumer file, and every tier fixture', async () => {
   assert.ok(existsSync(DIST_ENTRY), 'dist/ is missing: run `npm run build` first');
 
   const consumer = await mkdtemp(path.join(os.tmpdir(), 'flowgen-consumer-types-'));
@@ -171,6 +187,18 @@ export const definition: FlowSetDefinition = defineFlowSet((f) => {
 `,
       'utf8',
     );
+
+    // The four tier fixtures, compiled *as a consumer*: no `paths`, so the package name resolves
+    // through `exports` into `dist/`, and the committed palette augmentations have to attach to
+    // the published module for `tab.node('inject', …)` to mean anything. This is the test that
+    // would catch a tier name that exists only in `src/`, and an augmentation that lands on the
+    // sources instead of on what a consumer installs.
+    // ESM, like the repository and like any project that would consume this package: without it
+    // `module: nodenext` reads the fixtures as CommonJS and `verbatimModuleSyntax` rejects them.
+    await writeFile(path.join(consumer, 'package.json'), JSON.stringify({ name: 'consumer', private: true, type: 'module' }), 'utf8');
+    await cp(path.join(REPO_ROOT, 'test', 'types', 'tiers'), path.join(consumer, 'tiers'), { recursive: true });
+    await cp(path.join(REPO_ROOT, 'test', 'types', 'palettes'), path.join(consumer, 'palettes'), { recursive: true });
+
     await writeFile(
       path.join(consumer, 'tsconfig.json'),
       JSON.stringify({
@@ -181,10 +209,15 @@ export const definition: FlowSetDefinition = defineFlowSet((f) => {
           moduleResolution: 'nodenext',
           types: [],
           strict: true,
+          exactOptionalPropertyTypes: true,
+          noUncheckedIndexedAccess: true,
+          isolatedModules: true,
+          verbatimModuleSyntax: true,
+          erasableSyntaxOnly: true,
           skipLibCheck: true,
           noEmit: true,
         },
-        include: ['flow.ts'],
+        include: ['flow.ts', 'tiers/**/*.ts', 'palettes/**/*.d.ts'],
       }),
       'utf8',
     );
@@ -192,9 +225,18 @@ export const definition: FlowSetDefinition = defineFlowSet((f) => {
     const compiled = await run(process.execPath, [TSC, '--noEmit', '--pretty', 'false', '-p', consumer]);
     assert.equal(compiled.code, 0, `a consumer cannot type-check against the published declarations:\n${compiled.stdout}${compiled.stderr}`);
 
+    // The fixtures are only worth compiling if they were read: `--showConfig` says which files the
+    // program contains, and a renamed directory would otherwise make this test pass by emptiness.
+    const shown = await run(process.execPath, [TSC, '--showConfig', '-p', consumer]);
+    const files = (JSON.parse(shown.stdout) as { files: readonly string[] }).files.map((file) => path.relative(consumer, path.resolve(consumer, file)).split(path.sep).join('/'));
+    for (const tier of ['authoring', 'palette', 'diagnostics', 'testing']) {
+      assert.ok(files.includes(`tiers/${tier}.ts`), `the consumer program does not include the ${tier} fixture`);
+    }
+
     // ...and the same program must be reachable: the declaration files are real, not empty shells.
     const declarations = await readdir(path.join(consumer, 'node_modules', ...PACKAGE_NAME.split('/'), 'dist'));
     assert.ok(declarations.includes('cli'), 'the published dist has no cli directory');
+    assert.ok(declarations.includes('internal.js'), 'the private barrel is not built, so the CLI cannot run');
   } finally {
     await rm(consumer, { recursive: true, force: true });
   }
