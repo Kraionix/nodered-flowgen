@@ -17,6 +17,8 @@
  */
 
 import { isSubflowType, subflowTypeId, type PaletteType } from '../palette/model.ts';
+import { subflowPaletteType } from '../palette/sources/subflow.ts';
+import { subflowDefinitionLike } from '../model/subflows.ts';
 import type {
   ConfigNode,
   EntityId,
@@ -164,7 +166,8 @@ interface PortLinks {
 }
 
 export class Builder implements FlowBuilder {
-  readonly #palette: Readonly<Record<string, PaletteType>>;
+  /** The caller's palette, extended with this flow set's own subflow instance types. */
+  readonly #palette: Record<string, PaletteType>;
   readonly #allocator: IdAllocator;
   readonly #keys = new Map<string, string>();
   readonly #nodes: Node[] = [];
@@ -179,7 +182,7 @@ export class Builder implements FlowBuilder {
   readonly type = 'unplaced' as const;
 
   constructor(options: BuilderOptions) {
-    this.#palette = options.palette;
+    this.#palette = { ...options.palette };
     this.#allocator = createIdAllocator({ ...(options.lockfile === undefined ? {} : { locked: options.lockfile }) });
   }
 
@@ -228,7 +231,7 @@ export class Builder implements FlowBuilder {
   // ------------------------------------------------------------------------------------
 
   flow(key: string, options: FlowOptions = {}): FlowHandle {
-    const id = this.#allocate(`flow:${key}`, key);
+    const id = this.#allocate(`tab:${key}`, key);
     const env = options.env === undefined ? undefined : toEnvParams(options.env);
     this.#flows.push({
       id,
@@ -273,6 +276,10 @@ export class Builder implements FlowBuilder {
     };
     this.#subflows.push({ definition, ports });
     this.#params.set(id, env);
+    // Instance types are not in `GET /nodes` (inline subflows never are), so the builder adds
+    // them itself: without this, an instance would be an unknown type whose ports and defaults
+    // could not be materialised. `subflowOverlay` does the same for validation and codegen.
+    this.#palette[subflowTypeId(id)] = subflowPaletteType(subflowDefinitionLike(definition));
 
     const handle: SubflowHandle = {
       id,
@@ -297,7 +304,7 @@ export class Builder implements FlowBuilder {
   }
 
   #createGroup(z: string, key: string, options: GroupOptions): GroupHandle {
-    const id = this.#allocate(`group:${key}`, key);
+    const id = this.#allocate(z === '' ? `group:${key}` : `group:${z}/${key}`, key);
     const env = options.env === undefined ? undefined : toEnvParams(options.env);
     this.#groups.push({
       id,
@@ -391,7 +398,7 @@ export class Builder implements FlowBuilder {
     if (paletteType?.isConfig === true) return this.#createConfig(type, props, z);
 
     const key = stringKey(props) ?? defaultKey(type);
-    const id = this.#allocate(`${z === '' ? 'node' : z}:${key}`, key);
+    const id = this.#allocate(z === '' ? `node:${key}` : `node:${z}/${key}`, key);
     const { known, extras } = this.#splitProps(props, paletteType);
 
     // A node created inside a group that declares a `group` *reference* gets it filled in:
@@ -422,7 +429,7 @@ export class Builder implements FlowBuilder {
   #createConfig(type: string, props: Readonly<Record<string, unknown>>, z: string): NodeHandle {
     const paletteType = this.#palette[type] ?? null;
     const key = stringKey(props) ?? defaultKey(type);
-    const id = this.#allocate(`config:${key}`, key);
+    const id = this.#allocate(z === '' ? `config:${key}` : `config:${z}/${key}`, key);
     const { known, extras } = this.#splitProps(props, paletteType);
 
     this.#configs.push({
@@ -451,7 +458,7 @@ export class Builder implements FlowBuilder {
     const type = subflowTypeId(definitionId);
     const paletteType = this.#palette[type] ?? null;
     const key = options.key ?? `${entry.definition.name}_instance`;
-    const id = this.#allocate(`instance:${key}`, key);
+    const id = this.#allocate(z === '' ? `instance:${key}` : `instance:${z}/${key}`, key);
     const { known, extras } = this.#splitProps(props, paletteType);
     const env = readInstanceEnv(type, { env: options.env ?? {} }, this.#params);
 

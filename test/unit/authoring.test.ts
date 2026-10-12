@@ -345,9 +345,9 @@ test('ids are deterministic, unique and honour the lockfile', () => {
     ['start', 'start_2'],
     'a repeated authoring key gets its own id instead of merging two entities',
   );
-  assert.deepEqual(first.duplicateKeys, ['main:start']);
+  assert.deepEqual(first.duplicateKeys, ['node:main/start']);
 
-  const locked = definition.build({ palette: PALETTE, lockfile: new Map([['main:start', 'inject_legacy']]) });
+  const locked = definition.build({ palette: PALETTE, lockfile: new Map([['node:main/start', 'inject_legacy']]) });
   assert.equal(locked.flowSet.flows[0]?.nodes[0]?.id, 'inject_legacy');
 });
 

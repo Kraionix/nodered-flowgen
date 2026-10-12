@@ -83,8 +83,21 @@ export type Dashboard = DashboardBase & {
   readonly [W in WidgetName]: (group: Ref<'ui_group'>, props?: WidgetProps<W>) => NodeHandle<WidgetType<W>>;
 };
 
+/**
+ * Creates the helper for a container. Widgets are ordinary nodes, so they need a flow to live in:
+ * `dashboardIn(tab)` is the clear form, and `f.use(dashboard())` remains for callers whose
+ * helper only creates config nodes.
+ */
+export function dashboardIn(builder: ContainerHandle<string>, options: DashboardOptions = {}): Dashboard {
+  return build(builder, options);
+}
+
 export function dashboard(options: DashboardOptions = {}): (builder: ContainerHandle<string>) => Dashboard {
-  return (builder) => {
+  return (builder) => build(builder, options);
+}
+
+function build(builder: ContainerHandle<string>, options: DashboardOptions): Dashboard {
+  {
     const base = builder.config('ui_base' as KnownType, {
       // A stable authoring key: the id must not change when the display name does.
       key: 'base',
@@ -114,5 +127,5 @@ export function dashboard(options: DashboardOptions = {}): (builder: ContainerHa
     }
 
     return api as unknown as Dashboard;
-  };
+  }
 }

@@ -35,13 +35,13 @@ export interface SubflowParameterLike {
 /** The subset of a flow-file subflow definition the palette needs. */
 export interface SubflowDefinitionLike {
   readonly id: string;
-  readonly name?: string;
-  readonly category?: string;
-  readonly color?: string;
-  readonly icon?: string;
-  readonly env?: readonly SubflowParameterLike[];
-  readonly in?: readonly unknown[];
-  readonly out?: readonly unknown[];
+  readonly name?: string | undefined;
+  readonly category?: string | undefined;
+  readonly color?: string | undefined;
+  readonly icon?: string | undefined;
+  readonly env?: readonly SubflowParameterLike[] | undefined;
+  readonly in?: readonly unknown[] | undefined;
+  readonly out?: readonly unknown[] | undefined;
 }
 
 export function subflowPaletteType(definition: SubflowDefinitionLike): PaletteType {

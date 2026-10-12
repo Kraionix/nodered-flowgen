@@ -130,6 +130,15 @@ export {
 } from './emit/flowJson.ts';
 
 export {
+  formatSkipped as formatSkippedExtensions,
+  Toolkit,
+  toolkit,
+  type Disposer,
+  type Extension,
+  type SkippedExtension,
+} from './toolkit/index.ts';
+
+export {
   Builder,
   type BuilderOptions,
   type ContainerHandle,
