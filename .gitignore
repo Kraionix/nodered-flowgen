@@ -3,3 +3,4 @@ node_modules/
 *.receipt.json
 coverage/
 *.tgz
+test/types/palettes/
