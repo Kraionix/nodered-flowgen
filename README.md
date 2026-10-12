@@ -15,8 +15,16 @@ file.
   write is a compare-and-swap on the instance revision, and every `apply` writes a receipt that
   `rollback` can put back.
 
-Node ≥ 22.9, ESM, **zero runtime dependencies**. There is no build step: the packages ship as
-TypeScript and run through Node's type stripping, so the version you read is the version that runs.
+Node ≥ 22.18.0, ESM, **zero runtime dependencies**. The published package is compiled JavaScript
+with declarations: `tsc` → `dist`, and only `dist` is in the tarball. (Node refuses to strip types
+for any file under a `node_modules` path, so a package that shipped its `.ts` sources could be
+imported by nobody — see `test/integration/packaging.spec.ts`, which installs the tarball into a
+consumer on every test run.)
+
+Inside this repository the sources are the entry point: `node src/cli/index.ts` runs without a
+build, and the `paths` mapping in `tsconfig.json` keeps `@kraionix/nodered-flowgen` resolving to
+`src/index.ts` so the generated palette augmentations attach to the sources. The two worlds meet
+only at `npm run build`, which `npm test` runs first and `npm pack` runs through `prepack`.
 
 ## Quick start
 
@@ -176,9 +184,10 @@ from them, and `io`/`import`/`authoring`/`cli` sit on top.
 ## Tests
 
 ```sh
+npm test                                       # builds, then unit + integration
 npm run typecheck                              # tsc --noEmit, strict + exactOptionalPropertyTypes
-node --test "test/unit/*.test.ts"              # fast, no Node-RED needed
-node --test "test/integration/*.spec.ts"       # starts disposable Node-RED instances
+npm run test:unit                              # ~0.7 s, no Node-RED, no build needed
+npm run test:integration                       # builds, then starts disposable Node-RED instances
 ```
 
 * `test/fixtures/palettes/` — the raw `GET /nodes` pair from Node-RED 5.0.7 and 5.0.8, re-assembled
@@ -187,6 +196,9 @@ node --test "test/integration/*.spec.ts"       # starts disposable Node-RED inst
   caught (see that directory's README).
 * `test/integration/acceptance.spec.ts` — the milestone-1 acceptance run through the CLI, including
   a runtime probe that only passes if a subflow parameter override reached the instance.
+* `test/integration/packaging.spec.ts` — packs the tarball, installs it into a throwaway
+  `node_modules`, runs the bin, imports the entry point and type-checks a consumer file. It is the
+  only test that can see a package a consumer cannot install.
 
 ## License
 

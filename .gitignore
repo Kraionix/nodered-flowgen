@@ -1,4 +1,5 @@
 node_modules/
+dist/
 .flowgen-cache/
 *.receipt.json
 coverage/

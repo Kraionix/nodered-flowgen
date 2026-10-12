@@ -14,30 +14,40 @@
   "author": "Kraionix",
   "type": "module",
   "engines": {
-    "node": ">=22.9"
+    "node": ">=22.18.0"
   },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./toolkit": "./src/toolkit/index.ts",
-    "./testing": "./test/integration/harness.ts",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./toolkit": {
+      "types": "./dist/toolkit/index.d.ts",
+      "default": "./dist/toolkit/index.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {
-    "flowgen": "./src/cli/index.ts"
+    "flowgen": "./dist/cli/index.js"
   },
   "files": [
-    "src",
-    "examples",
+    "dist",
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
     "NOTICE"
   ],
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "node --test \"test/unit/*.test.ts\" \"test/integration/*.spec.ts\"",
+    "pretest": "npm run build",
     "test:unit": "node --test \"test/unit/*.test.ts\"",
-    "test:integration": "node --test \"test/integration/*.spec.ts\""
+    "test:integration": "node --test \"test/integration/*.spec.ts\"",
+    "pretest:integration": "npm run build",
+    "prepack": "npm run build"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

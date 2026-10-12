@@ -38,6 +38,23 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
 
 ### Fixed
 
+* **The package can be installed again.** The tarball shipped `.ts` sources and pointed `exports`
+  and `bin` at them, on the premise that consumers run the package through Node's type stripping.
+  Node refuses exactly that, by design: "Node.js refuses to handle TypeScript files inside folders
+  under a `node_modules` path". Every consumer hit
+  `ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING` — while 180 tests stayed green, because they all
+  import `../../src/…` directly. `tsc` now emits `dist` (JS + declarations), `exports`/`bin`
+  point at it, `files` ships `dist` and the documents, `engines` says `>=22.18.0` (the version
+  where type stripping became the default), and `exports["./testing"]` is gone: it pointed at
+  `test/integration/harness.ts`, which was never in the tarball and would drag `node-red` into a
+  consumer's runtime. `test/integration/packaging.spec.ts` packs, installs, runs and type-checks
+  the tarball on every test run, so this cannot come back silently.
+* **The library compiles without a consumer's generated palette.** `KnownType` is `keyof
+  KnownTypes`, which is `never` until some palette has been generated, and `PropsFor<never>`
+  distributed to `never` — so building `src/` alone failed with four errors in the dashboard
+  helper. `PropsFor` now guards the empty case with a tuple-wrapped `[T] extends [never]`, and the
+  dashboard helper creates its node family through the palette-agnostic `untyped()` /
+  `untypedConfig()` path instead of routing through `KnownType`.
 * **Layout no longer hangs on a flow with a feedback loop.** Depth was computed with a worklist
   that re-enqueued a node every time a longer path to it was found, so one loop reachable from a
   root — `inject → f1 → f2 → f1` — made the depth grow without bound and the queue never drain.
@@ -48,11 +65,15 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
 * **Layout covers subflow bodies and containerless nodes.** `layoutFlowSet` mapped `flowSet.flows`
   only, so a subflow's interior kept `0,0` and every node piled up at the origin; the acceptance
   example's `work` node was one of them.
+* The type-fixture harness dropped every indented continuation line of a TypeScript diagnostic, so
+  the half of the message that names the property to add was never asserted. It is parsed now.
 
 ### Notes
 
-* No build step and no runtime dependencies: the package is ESM TypeScript run through Node's type
-  stripping, so Node ≥ 22.9 is required.
+* Node ≥ 22.18.0. The published package is compiled to `dist/` (`npm run build`, run by `npm pack`
+  through `prepack`); inside the repository the `.ts` sources stay the entry point, and `paths` in
+  `tsconfig.json` keeps the package name resolving to `src/` so the generated palette
+  augmentations attach to the sources.
 * `nrlint` is not wired into the validation gate: its library API runs no rules without a resolved
   plugin set (verified — a syntactically broken function body lints clean), so a smoke test would
   have asserted nothing.

@@ -62,13 +62,19 @@ export interface NodeEnvelope {
 /**
  * Props accepted by `node(type, props)`.
  *
- * A known type gets its generated property bag intersected with the envelope; anything else
- * gets an open bag. The conditional is also what keeps this declaration legal while
- * `PaletteTypes` is still empty (before any palette has been generated).
+ * A known type gets its generated property bag intersected with the envelope; anything else gets
+ * an open bag.
+ *
+ * The `[T] extends [never]` guard is not decoration. `T` is inferred from the type argument, and
+ * `KnownType` is `keyof KnownTypes` — which is `never` until some palette has been generated. A
+ * bare conditional distributes over `never` and yields `never`, so `PropsFor<never>` was `never`
+ * and every call in the library that passed a `KnownType`-typed value stopped compiling: the
+ * library could not be built without one consumer's generated augmentations. Wrapping `T` in a
+ * tuple switches that one test to non-distributive, and `never` now means what it should —
+ * "no palette, so an open bag".
  */
-export type PropsFor<T extends string> = T extends keyof PaletteTypes
-  ? PaletteTypes[T] & NodeEnvelope
-  : NodeEnvelope & Record<string, unknown>;
+export type PropsFor<T extends string> = NodeEnvelope &
+  ([T] extends [never] ? Record<string, unknown> : T extends keyof PaletteTypes ? PaletteTypes[T] : Record<string, unknown>);
 
 /** Environment-variable value of a subflow parameter override, as the flow file stores it. */
 export type EnvValue = string | number | boolean | null;

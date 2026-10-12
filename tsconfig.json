@@ -22,7 +22,17 @@
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+
+    // The published package resolves through `exports` to `dist/`, which is what a consumer
+    // gets. Inside the repository there is no `dist` until something builds it, and the
+    // generated palette augmentations attach to the `@kraionix/nodered-flowgen` module — so the
+    // repo has to keep resolving that name to `src/`, or every augmentation would land on the
+    // compiled copy and the sources would type-check against an empty palette.
+    "paths": {
+      "@kraionix/nodered-flowgen": ["./src/index.ts"],
+      "@kraionix/nodered-flowgen/toolkit": ["./src/toolkit/index.ts"]
+    }
   },
   "include": ["src/**/*.ts", "test/**/*.ts", "examples/**/*.ts"],
   "exclude": ["test/types/negative/**"]

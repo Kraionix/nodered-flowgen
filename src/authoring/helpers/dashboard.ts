@@ -24,7 +24,7 @@
  * expressed once.
  */
 
-import type { KnownType, PropsFor, Ref } from '../../typing.ts';
+import type { PropsFor, Ref } from '../../typing.ts';
 
 import type { ContainerHandle, NodeHandle } from '../builder.ts';
 
@@ -98,25 +98,29 @@ export function dashboard(options: DashboardOptions = {}): (builder: ContainerHa
 
 function build(builder: ContainerHandle<string>, options: DashboardOptions): Dashboard {
   {
-    const base = builder.config('ui_base' as KnownType, {
+    // The helper creates its node family through the untyped path on purpose. Whether
+    // `ui_tab` is a *config* node is a palette fact, and this file is library code: it must
+    // compile and behave without a consumer's generated augmentations, and the dashboard types
+    // are not part of this package at all.
+    const base = builder.untypedConfig('ui_base', {
       // A stable authoring key: the id must not change when the display name does.
       key: 'base',
       name: options.baseName ?? 'Dashboard',
       ...(options.basePath === undefined ? {} : { path: options.basePath }),
       ...(options.theme === undefined ? {} : { theme: options.theme }),
-    } as PropsFor<'ui_base'>) as unknown as NodeHandle<'ui_base'>;
+    }) as unknown as NodeHandle<'ui_base'>;
 
     // The cast is confined to this one line: the palette's property bags are open interfaces,
     // and the helper adds the one property (`group`) the author does not repeat.
     const create = <T extends string>(type: T, group: Ref<'ui_group'>, props?: WidgetPropsFor<T>): NodeHandle<T> =>
-      builder.node(type as KnownType, { ...(props ?? {}), group } as unknown as PropsFor<'ui_tab'>) as unknown as NodeHandle<T>;
+      builder.untyped(type, { ...(props ?? {}), group }) as unknown as NodeHandle<T>;
 
     const api: Record<string, unknown> = {
       base,
       tab: (key: string, props?: TabProps): NodeHandle<'ui_tab'> =>
-        builder.node('ui_tab' as KnownType, { key, ...(props ?? {}) } as PropsFor<'ui_tab'>) as unknown as NodeHandle<'ui_tab'>,
+        builder.untypedConfig('ui_tab', { key, ...(props ?? {}) }) as unknown as NodeHandle<'ui_tab'>,
       group: (key: string, tab: Ref<'ui_tab'>, props?: GroupProps): NodeHandle<'ui_group'> =>
-        builder.node('ui_group' as KnownType, { key, tab, ...(props ?? {}) } as PropsFor<'ui_group'>) as unknown as NodeHandle<'ui_group'>,
+        builder.untypedConfig('ui_group', { key, tab, ...(props ?? {}) }) as unknown as NodeHandle<'ui_group'>,
       widget: create,
     };
 

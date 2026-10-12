@@ -81,6 +81,8 @@ export interface ContainerHandle<T extends string = string> {
   untyped(type: string, props?: Readonly<Record<string, unknown>>): NodeHandle;
   /** Creates a config node scoped to this container. */
   config<K extends KnownType>(type: K, props?: PropsFor<K>): NodeHandle<K>;
+  /** Escape hatch for a config node whose type the palette may not cover. */
+  untypedConfig(type: string, props?: Readonly<Record<string, unknown>>): NodeHandle;
   /** Wires each item to the next one, output 0 to input 0. */
   chain(...items: readonly Ref[]): void;
   /** Creates an instance of a subflow inside this container. */
@@ -334,6 +336,7 @@ export class Builder implements FlowBuilder {
     node: <K extends KnownType>(type: K, props?: PropsFor<K>) => NodeHandle<K>;
     untyped: (type: string, props?: Readonly<Record<string, unknown>>) => NodeHandle;
     config: <K extends KnownType>(type: K, props?: PropsFor<K>) => NodeHandle<K>;
+    untypedConfig: (type: string, props?: Readonly<Record<string, unknown>>) => NodeHandle;
     chain: (...items: readonly Ref[]) => void;
     instance: (subflow: SubflowHandle | string, options?: InstanceOptions) => NodeHandle;
     add: (...items: readonly Ref[]) => void;
@@ -348,6 +351,7 @@ export class Builder implements FlowBuilder {
           (props ?? {}) as Readonly<Record<string, unknown>>,
           scopeConfig ? z : '',
         ) as NodeHandle<K>,
+      untypedConfig: (type, props = {}) => this.#createConfig(type, props, scopeConfig ? z : ''),
       chain: (...items) => this.#chain(items),
       instance: (subflow, options = {}) => this.#createInstance(subflow, options, z, g),
       add: (...items) => {
@@ -366,6 +370,18 @@ export class Builder implements FlowBuilder {
 
   untyped(type: string, props: Readonly<Record<string, unknown>> = {}): NodeHandle {
     return this.#createNode(type, props, '', undefined);
+  }
+
+  /**
+   * A **config** node whose type the generated augmentations may not cover.
+   *
+   * `untyped` cannot serve this case: whether a type is a config node is a palette fact, and
+   * without that palette `untyped('ui_tab')` would build a canvas node with geometry and wires
+   * instead. Library code that ships its own node family — the dashboard helper — needs to say
+   * "config, whatever the palette says".
+   */
+  untypedConfig(type: string, props: Readonly<Record<string, unknown>> = {}): NodeHandle {
+    return this.#createConfig(type, props, '');
   }
 
   config<K extends KnownType>(type: K, props?: PropsFor<K>): NodeHandle<K> {

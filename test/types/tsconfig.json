@@ -17,7 +17,11 @@
     "erasableSyntaxOnly": true,
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "@kraionix/nodered-flowgen": ["../../src/index.ts"],
+      "@kraionix/nodered-flowgen/toolkit": ["../../src/toolkit/index.ts"]
+    }
   },
   "include": [
     "positive.ts",

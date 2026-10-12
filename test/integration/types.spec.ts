@@ -49,11 +49,23 @@ async function compile(project: string): Promise<{ code: number; diagnostics: re
   return { code, diagnostics: parseDiagnostics(output) };
 }
 
+/**
+ * TypeScript prints a diagnostic as a chain: the headline line, then indented elaborations
+ * ("Property 'group' is missing in type …"). Only the headline carries the `file(line,col)`
+ * prefix, so an indented line is appended to the diagnostic it belongs to. Dropping them loses
+ * the half of the message that actually tells an author what to change.
+ */
 function parseDiagnostics(output: string): readonly Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   for (const line of output.split(/\r?\n/)) {
     const match = /^(.*?)\((\d+),(\d+)\): error (TS\d+): (.*)$/.exec(line);
-    if (match === null) continue;
+    if (match === null) {
+      const previous = diagnostics[diagnostics.length - 1];
+      if (previous !== undefined && /^\s+\S/.test(line)) {
+        diagnostics[diagnostics.length - 1] = { ...previous, message: `${previous.message}\n${line.trim()}` };
+      }
+      continue;
+    }
     diagnostics.push({
       file: path.relative(REPO_ROOT, match[1] as string),
       line: Number(match[2]),
@@ -104,8 +116,9 @@ test('the negative fixture fails with exactly the expected diagnostics', async (
   );
   assert.match(diagnostics[0]?.message ?? '', /'minX' does not exist in type/);
   assert.match(diagnostics[2]?.message ?? '', /"ui_tab"' is not assignable to type '"ui_group"'/);
-  // The required reference is named in the target type; the "is missing" detail follows on
-  // the next line of the same diagnostic chain.
+  // The first line names the alias; the elaboration underneath names the property that is
+  // missing and the type it must be, which is what the author needs to fix it.
+  assert.match(diagnostics[3]?.message ?? '', /Property '"group"' is missing/);
   assert.match(diagnostics[3]?.message ?? '', /group: Ref<"ui_group">; order\?: number/);
   assert.match(diagnostics[4]?.message ?? '', /Did you mean '"ui_gauge"'/);
   assert.match(diagnostics[5]?.message ?? '', /not assignable to type 'EnvValue'/);

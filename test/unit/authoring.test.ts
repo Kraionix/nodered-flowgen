@@ -330,6 +330,31 @@ test('untyped() is an escape hatch that keeps the property bag open', () => {
   assert.deepEqual(node?.props.known, {}, 'nothing is materialised for an unknown type');
 });
 
+test('untypedConfig() creates a config node for a type the palette does not cover', () => {
+  // The dashboard helper depends on this: whether `ui_tab` is a config node is a palette fact,
+  // and library code must produce the right *shape* even before a palette has been generated.
+  // `untyped()` is the wrong primitive for it — without the palette it builds a canvas node, with
+  // geometry and a place in the tab.
+  const flowSet = build(
+    defineFlowSet((f) => {
+      const tab = f.flow('main');
+      tab.untypedConfig('ui_tab', { key: 'page', name: 'KPIs' });
+      tab.untyped('ui_gauge', { key: 'load' });
+    }),
+  );
+
+  assert.deepEqual(
+    flowSet.configs.map((config) => [config.id, config.type]),
+    [['page', 'ui_tab']],
+  );
+  assert.deepEqual(
+    flowSet.flows[0]?.nodes.map((node) => node.type),
+    ['ui_gauge'],
+    'a config node is never placed in a container',
+  );
+  assert.equal(eachNode(flowSet).find((node) => node.type === 'ui_gauge')?.geometry?.x, 120, 'an ordinary node still gets geometry');
+});
+
 test('ids are deterministic, unique and honour the lockfile', () => {
   const definition = defineFlowSet((f) => {
     const tab = f.flow('main');
