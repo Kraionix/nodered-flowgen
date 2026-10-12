@@ -17,7 +17,7 @@
  */
 
 import { isSubflowType, subflowTypeId, type PaletteType } from '../palette/model.ts';
-import { subflowPaletteType } from '../palette/sources/subflow.ts';
+import { INLINE_MODULE, subflowPaletteType } from '../palette/sources/subflow.ts';
 import { subflowDefinitionLike } from '../model/subflows.ts';
 import type {
   ConfigNode,
@@ -201,8 +201,24 @@ export interface GroupHandle extends ContainerHandle<'group'> {
 export interface FlowBuilder extends ContainerHandle<'unplaced'> {
   flow(key: string, options?: FlowOptions): FlowHandle;
   subflow(key: string, options: SubflowOptions, body: (s: SubflowHandle) => void): SubflowHandle;
+  /** Declares the `global-config` entry — its `env` hints and its module list. */
+  manifest(options?: ManifestOptions): void;
   /** Registers a helper module: `const dash = f.use(dashboard())`. */
   use<H>(helper: (builder: FlowBuilder) => H): H;
+}
+
+/**
+ * The `global-config` entry as the author declares it.
+ *
+ * Without a declaration the module list is *derived* from the palette (every non-core module a
+ * used type comes from), which is the right default for an authored flow set and keeps the
+ * version in one place. A declaration replaces that derivation entirely: an imported flow file
+ * says exactly which modules and hints it needs, and the file's own choice wins.
+ */
+export interface ManifestOptions {
+  /** The entry's `env` hint list — what the palette manager offers to install. */
+  readonly env?: ParamDeclarations;
+  readonly modules?: Readonly<Record<string, string>>;
 }
 
 export interface BuilderOptions {
@@ -212,7 +228,7 @@ export interface BuilderOptions {
 }
 
 /** Envelope keys that never become node properties. */
-const ENVELOPE_KEYS = new Set(['key', 'x', 'y', 'w', 'h', 'disabled', 'env']);
+const ENVELOPE_KEYS = new Set(['key', 'x', 'y', 'w', 'h', 'disabled', 'env', 'extras']);
 
 interface PortLinks {
   in: { node: EntityId; port?: number }[][];
@@ -232,6 +248,7 @@ export class Builder implements FlowBuilder {
   readonly #subflows: { definition: SubflowDef; ports: PortLinks }[] = [];
   readonly #params = new Map<EntityId, readonly EnvParam[]>();
   readonly #duplicateKeys: string[] = [];
+  #manifest: ManifestOptions | undefined;
 
   readonly id = 'unplaced';
   readonly type = 'unplaced' as const;
@@ -253,9 +270,16 @@ export class Builder implements FlowBuilder {
 
   toFlowSet(): FlowSet {
     const modules: Record<string, string> = {};
-    for (const type of [...this.#nodes, ...this.#configs].map((entity) => this.#palette[entity.type])) {
-      if (type === undefined || type.module === 'node-red' || type.module === '') continue;
-      modules[type.module] = type.version;
+    if (this.#manifest === undefined) {
+      for (const type of [...this.#nodes, ...this.#configs].map((entity) => this.#palette[entity.type])) {
+        // `node-red` is the runtime itself and `flowgen:inline` is this file's own subflows:
+        // neither is something the palette manager could install, so neither is a dependency.
+        if (type === undefined || type.module === 'node-red' || type.module === INLINE_MODULE) continue;
+        if (type.module === '') continue;
+        modules[type.module] = type.version;
+      }
+    } else {
+      Object.assign(modules, this.#manifest.modules ?? {});
     }
 
     // Handles become ids here, once every entity exists: a reference may point *forward* (a
@@ -296,7 +320,23 @@ export class Builder implements FlowBuilder {
       configs: configsOf(''),
       loose: nodesOf(''),
       modules,
+      // A declared manifest keeps the entry's own identity; without one the emitter synthesises
+      // an entry from the derived module list, exactly as it did before `import` existed.
+      ...(this.#manifest === undefined
+        ? {}
+        : {
+            manifest: {
+              id: this.#allocate('global-config', 'global-config'),
+              env: toEnvParams(this.#manifest.env ?? {}),
+            },
+          }),
     };
+  }
+
+  manifest(options: ManifestOptions = {}): void {
+    // Last declaration wins: the entry is one entity, and `#allocate` would hand a second call a
+    // disambiguated key, which would emit two entries instead of replacing one.
+    this.#manifest = options;
   }
 
   #resolveProps(
@@ -519,14 +559,17 @@ export class Builder implements FlowBuilder {
     }
 
     const geometry = readGeometry(props);
-    const env = readInstanceEnv(type, props, this.#params);
+    const env = readInstanceEnv(type, props, this.#params) ?? readNodeEnv(props);
 
     const node: Node = {
       id,
       type,
       ...(z === '' ? {} : { z }),
       ...(g === undefined ? {} : { g }),
-      ...(props['disabled'] === true ? { disabled: true } : {}),
+      // `disabled` is both an envelope flag and, for a few types (`ui_tab`, `ui_group`), a
+      // palette property. The property wins: a node whose palette declares `disabled` writes it
+      // as a property, and the envelope has no second spelling to offer.
+      ...(props['disabled'] === true && !declares(paletteType, 'disabled') ? { disabled: true } : {}),
       props: { known, extras },
       ...(env === undefined ? {} : { env }),
       ...(geometry === undefined ? {} : { geometry }),
@@ -586,7 +629,7 @@ export class Builder implements FlowBuilder {
       type,
       ...(z === '' ? {} : { z }),
       ...(g === undefined ? {} : { g }),
-      ...(props['disabled'] === true ? { disabled: true } : {}),
+      ...(props['disabled'] === true && !declares(paletteType, 'disabled') ? { disabled: true } : {}),
       props: { known, extras },
       ...(env === undefined ? {} : { env }),
       ...(geometry === undefined ? {} : { geometry }),
@@ -674,6 +717,16 @@ export class Builder implements FlowBuilder {
       extras[name] = value;
     }
 
+    // `extras` is the documented home for properties the palette does not declare; they follow
+    // the ones that arrived inline, so the object literal's own order is preserved either way.
+    const bag = props['extras'];
+    if (bag !== null && typeof bag === 'object' && !Array.isArray(bag)) {
+      for (const [name, value] of Object.entries(bag as Record<string, unknown>)) {
+        if (declared.has(name) || name === 'extras') continue;
+        extras[name] = value;
+      }
+    }
+
     return { known, extras };
   }
 
@@ -698,6 +751,11 @@ export class Builder implements FlowBuilder {
       return id;
     }
   }
+}
+
+/** True when the palette declares `name` as a property of this type. */
+function declares(type: PaletteType | null, name: string): boolean {
+  return type !== null && Object.hasOwn(type.defaults, name);
 }
 
 /** True when the type declares a `group` reference that can point at a group node. */
@@ -727,6 +785,21 @@ function readGeometry(props: { readonly x?: unknown; readonly y?: unknown; reado
   const w = props.w;
   const h = props.h;
   return { x, y, ...(typeof w === 'number' ? { w } : {}), ...(typeof h === 'number' ? { h } : {}) };
+}
+
+/**
+ * A node's own `env` parameters, for the rare file that has them.
+ *
+ * Distinct from an instance's overrides: those are converted with the *declared* parameter types
+ * (`readInstanceEnv`), while a plain node's `env` is written as the file had it.
+ */
+function readNodeEnv(props: Readonly<Record<string, unknown>>): readonly EnvParam[] | undefined {
+  const declared = props['env'];
+  if (declared === undefined || declared === null || typeof declared !== 'object' || Array.isArray(declared)) {
+    return undefined;
+  }
+  const params = toEnvParams(declared as ParamDeclarations);
+  return params.length === 0 ? undefined : params;
 }
 
 /** Subflow instance overrides live in `env`, not in node properties. */

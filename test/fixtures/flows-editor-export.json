@@ -1,0 +1,350 @@
+[
+    {
+        "id": "scale",
+        "type": "subflow",
+        "name": "scale × factor",
+        "info": "Editor export fixture: a subflow with a group in its body.",
+        "category": "function",
+        "in": [
+            {
+                "x": 100,
+                "y": 100,
+                "wires": [
+                    {
+                        "id": "work"
+                    }
+                ]
+            }
+        ],
+        "out": [
+            {
+                "x": 500,
+                "y": 100,
+                "wires": [
+                    {
+                        "id": "work",
+                        "port": 0
+                    }
+                ]
+            }
+        ],
+        "env": [
+            {
+                "name": "factor",
+                "type": "num",
+                "value": "2"
+            }
+        ],
+        "meta": {
+            "node-red-dashboard": "3.6.6"
+        },
+        "color": "#DDAA99",
+        "inputLabels": [
+            "value"
+        ],
+        "outputLabels": [
+            "scaled"
+        ]
+    },
+    {
+        "id": "body",
+        "type": "group",
+        "z": "scale",
+        "name": "body",
+        "style": {
+            "label": true
+        },
+        "nodes": [
+            "work"
+        ],
+        "x": 100,
+        "y": 60,
+        "w": 300,
+        "h": 200
+    },
+    {
+        "id": "work",
+        "type": "function",
+        "z": "scale",
+        "g": "body",
+        "name": "x factor",
+        "func": "msg.payload *= env.get(\"factor\");\nreturn msg;",
+        "outputs": 1,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 0,
+        "y": 0,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "base",
+        "type": "ui_base",
+        "name": "Ops"
+    },
+    {
+        "id": "page",
+        "type": "ui_tab",
+        "name": "KPIs",
+        "icon": "dashboard",
+        "order": 0,
+        "disabled": false,
+        "hidden": false
+    },
+    {
+        "id": "panel",
+        "type": "ui_group",
+        "name": "KPIs",
+        "tab": "page",
+        "order": 0,
+        "disp": true,
+        "width": 6,
+        "collapse": false,
+        "disabled": false,
+        "hidden": false,
+        "className": ""
+    },
+    {
+        "id": "global-config",
+        "type": "global-config",
+        "env": [
+            {
+                "name": "node-red-dashboard",
+                "type": "str",
+                "value": "3.6.6"
+            }
+        ],
+        "modules": {
+            "node-red-dashboard": "3.6.6"
+        }
+    },
+    {
+        "id": "ops",
+        "type": "tab",
+        "label": "Ops",
+        "disabled": false,
+        "info": "Editor export fixture.",
+        "env": [
+            {
+                "name": "region",
+                "type": "str",
+                "value": "eu"
+            }
+        ]
+    },
+    {
+        "id": "tls",
+        "type": "tls-config",
+        "z": "ops",
+        "name": "scoped tls",
+        "certType": "files",
+        "cert": "",
+        "key": "tls",
+        "p12": "",
+        "p12name": "",
+        "ca": "",
+        "certname": "",
+        "keyname": "",
+        "caname": "",
+        "servername": "",
+        "verifyservercert": true,
+        "alpnprotocol": "",
+        "certEnv": "",
+        "keyEnv": "",
+        "caEnv": ""
+    },
+    {
+        "id": "pipeline",
+        "type": "group",
+        "z": "ops",
+        "name": "pipeline",
+        "style": {
+            "stroke": "#a4a4a4",
+            "fill": "none",
+            "label": true
+        },
+        "nodes": [
+            "send",
+            "receive",
+            "start"
+        ],
+        "x": 95,
+        "y": 155,
+        "w": 550,
+        "h": 222
+    },
+    {
+        "id": "send",
+        "type": "link out",
+        "z": "ops",
+        "g": "pipeline",
+        "name": "send",
+        "mode": "link",
+        "links": [],
+        "x": 0,
+        "y": 0,
+        "wires": []
+    },
+    {
+        "id": "receive",
+        "type": "link in",
+        "z": "ops",
+        "g": "pipeline",
+        "name": "receive",
+        "links": [
+            "send"
+        ],
+        "mode": "link",
+        "x": 0,
+        "y": 0,
+        "wires": [
+            [
+                "join"
+            ]
+        ]
+    },
+    {
+        "id": "start",
+        "type": "inject",
+        "z": "ops",
+        "g": "pipeline",
+        "name": "tick",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "30",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "1",
+        "payloadType": "num",
+        "x": 0,
+        "y": 0,
+        "wires": [
+            [
+                "send"
+            ]
+        ]
+    },
+    {
+        "id": "join",
+        "type": "junction",
+        "z": "ops",
+        "x": 0,
+        "y": 0,
+        "wires": [
+            [
+                "scale_use"
+            ]
+        ]
+    },
+    {
+        "id": "scale_use",
+        "type": "subflow:scale",
+        "z": "ops",
+        "name": "scale x3",
+        "env": [
+            {
+                "name": "factor",
+                "type": "num",
+                "value": "3"
+            }
+        ],
+        "x": 0,
+        "y": 0,
+        "wires": [
+            [
+                "widget"
+            ]
+        ]
+    },
+    {
+        "id": "widget",
+        "type": "acme-widget",
+        "z": "ops",
+        "name": "acme",
+        "threshold": 7,
+        "labels": [
+            "a",
+            "b"
+        ],
+        "x": 0,
+        "y": 0,
+        "wires": [
+            [
+                "ui_gauge"
+            ]
+        ]
+    },
+    {
+        "id": "ui_gauge",
+        "type": "ui_gauge",
+        "z": "ops",
+        "name": "load",
+        "group": "panel",
+        "order": 0,
+        "width": 0,
+        "height": 0,
+        "gtype": "gage",
+        "title": "gauge",
+        "label": "units",
+        "format": "{{value}}",
+        "min": 0,
+        "max": 100,
+        "colors": [
+            "#00B500",
+            "#E6E600",
+            "#CA3838"
+        ],
+        "seg1": "",
+        "seg2": "",
+        "diff": false,
+        "className": "",
+        "x": 0,
+        "y": 0,
+        "wires": []
+    },
+    {
+        "id": "spare",
+        "type": "tab",
+        "label": "Spare",
+        "disabled": true,
+        "info": ""
+    },
+    {
+        "id": "loose",
+        "type": "inject",
+        "name": "loose",
+        "props": [
+            {
+                "p": "payload"
+            },
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "x",
+        "payloadType": "date",
+        "x": 0,
+        "y": 0,
+        "wires": [
+            []
+        ]
+    }
+]

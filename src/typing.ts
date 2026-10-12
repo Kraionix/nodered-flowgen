@@ -57,6 +57,32 @@ export interface NodeEnvelope {
   readonly y?: number;
   readonly w?: number;
   readonly h?: number;
+  /**
+   * Properties the palette does not declare, written verbatim in this order.
+   *
+   * The generated property bags are deliberately closed, so `topgic: 'x'` is a compile error;
+   * but a flow file may legitimately carry keys this build's palette has never heard of (a newer
+   * runtime's property, `l`, `icon`, a plugin's field), and dropping them would make
+   * `import → build` lossy. `extras` is the one place those go.
+   */
+  readonly extras?: Readonly<Record<string, unknown>>;
+  /**
+   * Node-level `env` parameters.
+   *
+   * A subflow *instance* spells overrides the same way but converts them with the declared
+   * parameter types (`instance(def, {env})` is the surface for that); an ordinary node's `env`
+   * is written as-is, which is what keeps an imported file byte-identical.
+   */
+  readonly env?: Readonly<Record<string, EnvSpec>>;
+}
+
+/** An `env` parameter as a flow file stores it: a declared type plus its value. */
+export interface EnvSpec {
+  /** `str`, `num`, `bool`, `json`, `cred`, `env`, `flow`, `global`. */
+  readonly type: string;
+  readonly value: unknown;
+  /** The editor's own per-parameter extras (a `cred`'s label, say). Written verbatim. */
+  readonly ui?: unknown;
 }
 
 /**

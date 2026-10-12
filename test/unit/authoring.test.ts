@@ -543,3 +543,25 @@ test('a config node can be scoped to the container, the way an imported file sco
   assert.deepEqual(flowSet.configs.map((config) => config.id), ['shared']);
   assert.deepEqual(flowSet.flows[0]?.configs.map((config) => config.id), ['scoped']);
 });
+
+test('undeclared properties have a home, so a closed property bag is still lossless', () => {
+  const flowSet = build(
+    defineFlowSet((f) => {
+      f.manifest({ env: { hint: P.str('node-red-dashboard') }, modules: { 'node-red-dashboard': '3.6.6', 'node-red': '5.0.8' } });
+      const tab = f.flow('main');
+      tab.node('inject', { key: 'start', topic: 'orders', extras: { l: false, icon: 'x.svg' } });
+      tab.untyped('inject', { key: 'other', env: { p: P.str('v') } });
+    }),
+  );
+
+  const nodes = flowSet.flows[0]?.nodes ?? [];
+  assert.deepEqual(Object.keys(nodes[0]?.props.extras ?? {}), ['l', 'icon'], 'the bag keeps its order');
+  assert.deepEqual(Object.keys(nodes[0]?.props.known ?? {}), ['name', 'topic', 'payload', 'once']);
+  assert.deepEqual(nodes[1]?.env, [{ name: 'p', type: 'str', value: 'v' }], 'a node-level env survives');
+
+  assert.deepEqual(flowSet.manifest, {
+    id: 'global-config',
+    env: [{ name: 'hint', type: 'str', value: 'node-red-dashboard' }],
+  });
+  assert.deepEqual(flowSet.modules, { 'node-red-dashboard': '3.6.6' }, 'a declared list replaces the derivation');
+});

@@ -10,13 +10,13 @@
  */
 
 import type { EnvParam } from '../model/entities.ts';
+import type { EnvSpec } from '../typing.ts';
 
 export type ParamType = 'str' | 'num' | 'bool' | 'json' | 'cred' | 'env' | 'flow' | 'global';
 
-export interface ParamSpec {
+/** A declared parameter: the file's own shape (`EnvSpec`) with the type narrowed to the known set. */
+export interface ParamSpec extends EnvSpec {
   readonly type: ParamType;
-  /** Value as the flow file stores it. */
-  readonly value: unknown;
 }
 
 export const P = {
@@ -35,7 +35,13 @@ export const P = {
 export type ParamDeclarations = Readonly<Record<string, ParamSpec>>;
 
 export function toEnvParams(declarations: ParamDeclarations): readonly EnvParam[] {
-  return Object.entries(declarations).map(([name, spec]) => ({ name, type: spec.type, value: spec.value }));
+  return Object.entries(declarations).map(([name, spec]) => ({
+    name,
+    type: spec.type,
+    value: spec.value,
+    // `ui` is the editor's own per-parameter bag; it round-trips or the manifest loses hints.
+    ...(spec.ui === undefined ? {} : { ui: spec.ui }),
+  }));
 }
 
 /**

@@ -237,15 +237,14 @@ export function emitGlobalConfig(flowSet: FlowSet): Record<string, unknown> | nu
   const manifest = flowSet.manifest;
   if (manifest === undefined && modules.length === 0) return null;
 
-  const entry: Record<string, unknown> = {
+  // `env` and `modules` are both declared defaults of `global-config`, so the editor always
+  // writes both, empty or not.
+  return {
     id: manifest?.id ?? 'global-config',
     type: 'global-config',
     env: (manifest?.env ?? []).map(emitEnvParam),
+    modules: Object.fromEntries(modules.sort(([a], [b]) => (a < b ? -1 : 1))),
   };
-  if (modules.length > 0) {
-    entry['modules'] = Object.fromEntries(modules.sort(([a], [b]) => (a < b ? -1 : 1)));
-  }
-  return entry;
 }
 
 function writeProperties(

@@ -41,8 +41,10 @@ const LAYERS: readonly (readonly string[])[] = [
   ['palette'],
   // The IR is data about a *flow set*, and it is expressed in palette terms (what a type declares).
   ['model'],
-  // The two functions of the IR: turn it into a flow file, and check it.
-  ['emit', 'import', 'validate'],
+  // The three functions of the IR: turn it into a flow file, into source, and check it.
+  // `codegen` sits here rather than beside `authoring` because it *reads* the IR the way `emit`
+  // does — its output happens to be source, but it depends on nothing the builder knows.
+  ['emit', 'import', 'validate', 'codegen'],
   // Things that hold a flow set and do something with it.
   ['authoring', 'io'],
   // Project configuration binds authoring and targets together.
