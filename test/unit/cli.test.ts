@@ -9,7 +9,8 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -227,6 +228,36 @@ ${flow}  }),
 ${options.url === undefined ? '' : `  targets: { local: { url: ${JSON.stringify(options.url)} } },\n`}});
 `;
 }
+
+test('the bin runs when it is reached through a symlinked directory', async () => {
+  // `node_modules/.bin/flowgen` is a symlink, so this is the *normal* way an installed CLI is
+  // started — and the old entry guard compared `argv[1]` (the link) with `import.meta.url` (the
+  // resolved target), decided it was not the entry point, and exited 0 without printing a thing.
+  const link = await mkdtemp(path.join(os.tmpdir(), 'flowgen-link-'));
+  try {
+    await symlink(path.join(REPO_ROOT, 'src', 'cli'), path.join(link, 'cli'));
+    const result = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
+      const child = spawn(process.execPath, [path.join(link, 'cli', 'bin.ts'), '--help'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.setEncoding('utf8');
+      child.stderr.setEncoding('utf8');
+      child.stdout.on('data', (chunk: string) => {
+        stdout += chunk;
+      });
+      child.stderr.on('data', (chunk: string) => {
+        stderr += chunk;
+      });
+      child.once('error', reject);
+      child.once('close', (code) => resolve({ code: code ?? -1, stdout, stderr }));
+    });
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /usage: flowgen <command>/, 'the CLI printed nothing through the symlink');
+  } finally {
+    await rm(link, { recursive: true, force: true });
+  }
+});
 
 test('flowgen init scaffolds a config, ignore entries and refuses to clobber', async () => {
   const dir = await tempDir();

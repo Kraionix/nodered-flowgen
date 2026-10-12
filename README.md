@@ -21,7 +21,7 @@ for any file under a `node_modules` path, so a package that shipped its `.ts` so
 imported by nobody — see `test/integration/packaging.spec.ts`, which installs the tarball into a
 consumer on every test run.)
 
-Inside this repository the sources are the entry point: `node src/cli/index.ts` runs without a
+Inside this repository the sources are the entry point: `node src/cli/bin.ts` runs without a
 build, and the `paths` mapping in `tsconfig.json` keeps `@kraionix/nodered-flowgen` resolving to
 `src/index.ts` so the generated palette augmentations attach to the sources. The two worlds meet
 only at `npm run build`, which `npm test` runs first and `npm pack` runs through `prepack`.

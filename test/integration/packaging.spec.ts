@@ -20,9 +20,8 @@
 
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -114,14 +113,24 @@ test('the packed tarball installs into a consumer, runs its bin, and imports as 
       assert.ok(existsSync(path.join(installed, target.types as string)), `exports["${subpath}"].types points at a missing file`);
     }
 
-    // The bin, reached the way a consumer reaches it: through the path `bin` declares.
-    const binPath = path.join(installed, manifest.bin['flowgen'] as string);
-    assert.ok(existsSync(binPath), 'bin.flowgen points at a missing file');
-    assert.equal((await readFile(binPath, 'utf8')).split('\n')[0], '#!/usr/bin/env node', 'the bin lost its shebang');
+    // The bin, reached the way a consumer reaches it. npm links `node_modules/.bin/flowgen` to
+    // the file `bin` names, and the OS then executes *through that symlink* — the path the
+    // interpreter is handed is the link, not the target. The old entry point compared that path
+    // with `import.meta.url` (the resolved target), decided it was not the entry point, and exited
+    // 0 in silence: `npx flowgen` did nothing at all.
+    const binTarget = path.join(installed, manifest.bin['flowgen'] as string);
+    assert.ok(existsSync(binTarget), 'bin.flowgen points at a missing file');
+    assert.equal((await readFile(binTarget, 'utf8')).split('\n')[0], '#!/usr/bin/env node', 'the bin lost its shebang');
 
-    const help = await run(process.execPath, [binPath, '--help']);
+    const binDir = path.join(consumer, 'node_modules', '.bin');
+    const binLink = path.join(binDir, 'flowgen');
+    await mkdir(binDir, { recursive: true });
+    await symlink(path.relative(binDir, binTarget), binLink);
+
+    const help = await run(process.execPath, [binLink, '--help']);
     assert.equal(help.code, 0, help.stderr);
-    assert.match(help.stdout, /usage: flowgen <command>/);
+    assert.match(help.stdout, /usage: flowgen <command>/, 'the CLI ran through the .bin symlink and printed nothing');
+    assert.notEqual(help.stdout.trim(), '', 'running the bin through its symlink must not exit 0 silently');
 
     // The import a consumer writes, resolved through `exports` — no type stripping involved.
     const program = `

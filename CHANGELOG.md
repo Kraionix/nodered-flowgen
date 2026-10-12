@@ -38,6 +38,13 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
 
 ### Fixed
 
+* **The CLI no longer exits 0 in silence when it is run through a symlink.** The entry point lived
+  at the bottom of `src/cli/index.ts` behind `import.meta.url === pathToFileURL(process.argv[1]).href`.
+  `argv[1]` keeps the path the interpreter was given while `import.meta.url` is the resolved real
+  path, and `node_modules/.bin/flowgen` **is a symlink** — npm, npx and pnpm all run a bin through
+  one. So on every real installation the guard was false and `flowgen` printed nothing and exited
+  `0`. Invoking the CLI is now `src/cli/bin.ts`, a file whose only job is to call `main()`, and
+  `index.ts` has no import side effects: there is no condition left to get wrong.
 * **The package can be installed again.** The tarball shipped `.ts` sources and pointed `exports`
   and `bin` at them, on the premise that consumers run the package through Node's type stripping.
   Node refuses exactly that, by design: "Node.js refuses to handle TypeScript files inside folders

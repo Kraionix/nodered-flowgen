@@ -30,7 +30,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "flowgen": "./dist/cli/index.js"
+    "flowgen": "./dist/cli/bin.js"
   },
   "files": [
     "dist",

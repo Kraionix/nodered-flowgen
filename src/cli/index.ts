@@ -1,19 +1,21 @@
-#!/usr/bin/env node
 /**
- * `flowgen` — the entry point.
+ * `flowgen` — argv in, exit code out.
  *
  * Two responsibilities, and deliberately no more: turn `argv` into a command invocation, and turn
  * whatever comes back into a process exit code. All the work lives in the command modules, and
  * `runCli` is exported separately from `main` so tests can drive the whole CLI in-process with a
  * captured environment — a subprocess per assertion would make the test suite unusable.
  *
+ * This module has **no import side effects**. Invoking the CLI is `bin.ts`'s job, and that
+ * separation is what replaced the `import.meta.url === argv[1]` guard, which silently disabled the
+ * CLI when it was reached through a symlink — that is, through `node_modules/.bin/flowgen`, which
+ * is how npm, npx and pnpm all run an installed bin.
+ *
  * Error handling follows the exit-code contract: a `UsageError` is the caller's mistake (`2`), a
  * `CliFailure` carries its own code, and anything else is a defect in this tool (`5`) and is
  * printed with its stack, because hiding it behind "internal error" would make bug reports
  * worthless.
  */
-
-import { pathToFileURL } from 'node:url';
 
 import { parseArgv, flag, GLOBAL_OPTIONS, renderUsage, rejectPositionals, type OptionSpec, type ParsedArgs } from './args.ts';
 import { createContext, type CliContext, type CliIo } from './context.ts';
@@ -244,12 +246,3 @@ function flagOf(argv: readonly string[], name: string): boolean {
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
   process.exitCode = await runCli({ argv });
 }
-
-/**
- * The `bin` entry. The guard keeps `import { runCli }` in a test from also running the CLI:
- * only the file the interpreter was pointed at executes.
- */
-const invokedDirectly =
-  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
-
-if (invokedDirectly) await main();
