@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { paletteProperty, paletteType, type PaletteModule, type PaletteProvenance } from '../../src/palette/model.ts';
+import {
+  paletteProperty,
+  paletteType,
+  type PaletteNodeSet,
+  type PaletteProvenance,
+} from '../../src/palette/model.ts';
 import {
   createPaletteSnapshot,
   describePalette,
@@ -26,18 +31,27 @@ function typesOf(document: Record<string, unknown>): Record<string, Record<strin
 
 const LIVE: PaletteProvenance = { kind: 'live', url: 'http://127.0.0.1:1890', userDir: null, nodeModulesDirs: null };
 
+function nodeSet(id: string, name: string, module: string, version: string, types: string[]): PaletteNodeSet {
+  return { id, name, module, version, enabled: true, local: false, user: false, types };
+}
+
 function sampleInput(overrides: Partial<PaletteSnapshotInput> = {}): PaletteSnapshotInput {
   return {
     nodeRedVersion: '5.0.8',
     provenance: LIVE,
-    modules: [
-      { id: 'node-red', name: 'node-red', version: '5.0.8', types: ['inject', 'mqtt-broker'] },
-      { id: 'node-red-dashboard', name: 'node-red-dashboard', version: '3.6.6', types: ['ui_gauge'] },
-    ] satisfies PaletteModule[],
+    nodeSets: [
+      nodeSet('node-red/inject', 'inject', 'node-red', '5.0.8', ['inject']),
+      nodeSet('node-red/mqtt', 'mqtt', 'node-red', '5.0.8', ['mqtt-broker']),
+      nodeSet('node-red-dashboard/ui_gauge', 'ui_gauge', 'node-red-dashboard', '3.6.6', ['ui_gauge']),
+      // `junction` is registered by the runtime without an editor palette entry: the node
+      // set exists, the type definition does not.
+      nodeSet('node-red/junction', 'junction', 'node-red', '5.0.8', ['junction']),
+    ],
     types: [
       paletteType('ui_gauge', {
         module: 'node-red-dashboard',
-        setVersion: '3.6.6',
+        nodeSet: 'node-red-dashboard/ui_gauge',
+        version: '3.6.6',
         category: 'dashboard',
         paletteLabel: 'gauge',
         color: 'rgb(119, 198, 204)',
@@ -54,7 +68,8 @@ function sampleInput(overrides: Partial<PaletteSnapshotInput> = {}): PaletteSnap
       }),
       paletteType('inject', {
         module: 'node-red',
-        setVersion: '5.0.8',
+        nodeSet: 'node-red/inject',
+        version: '5.0.8',
         category: 'common',
         paletteLabel: 'inject',
         color: '#a6bbcf',
@@ -71,7 +86,8 @@ function sampleInput(overrides: Partial<PaletteSnapshotInput> = {}): PaletteSnap
       }),
       paletteType('mqtt-broker', {
         module: 'node-red',
-        setVersion: '5.0.8',
+        nodeSet: 'node-red/mqtt',
+        version: '5.0.8',
         category: 'config',
         paletteLabel: 'mqtt-broker',
         color: '#3FADB5',
@@ -83,23 +99,33 @@ function sampleInput(overrides: Partial<PaletteSnapshotInput> = {}): PaletteSnap
         },
         credentials: { user: paletteProperty({ value: '' }), password: paletteProperty({ value: '' }) },
       }),
+      paletteType('junction', {
+        module: 'node-red',
+        nodeSet: 'node-red/junction',
+        version: '5.0.8',
+        synthetic: true,
+      }),
     ],
     ...overrides,
   };
 }
 
-test('creation sorts modules and types so extraction order cannot leak into the hash', () => {
-  const forward = createPaletteSnapshot(sampleInput());
+test('creation sorts node sets and types so extraction order cannot leak into the hash', () => {
+  const base = sampleInput();
+  const forward = createPaletteSnapshot(base);
   const reversed = createPaletteSnapshot({
-    ...sampleInput(),
-    modules: [...sampleInput().modules].reverse(),
-    types: [...sampleInput().types].reverse(),
+    ...base,
+    nodeSets: [...base.nodeSets].reverse(),
+    types: [...base.types].reverse(),
   });
 
   assert.equal(forward.contentHash, reversed.contentHash);
-  assert.deepEqual(Object.keys(forward.types), ['inject', 'mqtt-broker', 'ui_gauge']);
-  assert.deepEqual(forward.modules.map((module) => module.id), ['node-red', 'node-red-dashboard']);
-  assert.deepEqual(forward.modules[0]?.types, ['inject', 'mqtt-broker']);
+  assert.deepEqual(Object.keys(forward.types), ['inject', 'junction', 'mqtt-broker', 'ui_gauge']);
+  assert.deepEqual(
+    forward.nodeSets.map((entry) => entry.id),
+    ['node-red-dashboard/ui_gauge', 'node-red/inject', 'node-red/junction', 'node-red/mqtt'],
+  );
+  assert.deepEqual(forward.nodeSets[1]?.types, ['inject']);
 });
 
 test('the hash is stable across runs and recomputable from the parsed snapshot', () => {
@@ -149,16 +175,36 @@ test('snapshot serialisation round-trips byte for byte', () => {
 test('optional fields are omitted, not written as nulls, and survive the round trip', () => {
   const text = serializePaletteSnapshot(createPaletteSnapshot(sampleInput()));
   const document = documentOf(text);
+  const types = typesOf(document);
 
-  const inject = typesOf(document)['inject'] as Record<string, unknown>;
+  const inject = types['inject'] as Record<string, unknown>;
   assert.equal(Object.hasOwn(inject, 'isConfig'), false);
   assert.equal(Object.hasOwn(inject, 'credentials'), false);
   assert.equal(Object.hasOwn(inject, 'refs'), false);
+  assert.equal(Object.hasOwn(inject, 'synthetic'), false);
   assert.equal(Object.hasOwn(inject, 'align'), true);
+  assert.equal(inject['nodeSet'], 'node-red/inject');
 
-  const gauge = typesOf(document)['ui_gauge'] as Record<string, unknown>;
-  const refs = gauge['refs'] as Record<string, { kind: string; targets: unknown }>;
-  assert.deepEqual(refs['group'], { kind: 'one', targets: ['ui_group'] });
+  const gauge = types['ui_gauge'] as Record<string, unknown>;
+  assert.deepEqual(gauge['refs'], { group: { kind: 'one', targets: ['ui_group'] } });
+
+  const junction = types['junction'] as Record<string, unknown>;
+  assert.equal(junction['synthetic'], true);
+  assert.equal(Object.hasOwn(junction, 'defaults'), false);
+
+  const nodeSets = document['nodeSets'] as Record<string, unknown>[];
+  assert.equal(Object.hasOwn(nodeSets[0] as object, 'local'), false, 'flags that are false stay out of the file');
+});
+
+test('a type whose node set id repeats its module name omits the redundant field', () => {
+  const snapshot = createPaletteSnapshot({
+    ...sampleInput(),
+    nodeSets: [...sampleInput().nodeSets, nodeSet('flowgen:inline', 'inline', 'flowgen:inline', '0.0.0', ['helper'])],
+    types: [...sampleInput().types, paletteType('helper', { module: 'flowgen:inline', version: '1.0.0' })],
+  });
+  const text = serializePaletteSnapshot(snapshot);
+  assert.equal(Object.hasOwn(typesOf(documentOf(text))['helper'] as object, 'nodeSet'), false);
+  assert.equal(unwrapOrThrow(parsePaletteSnapshot(text)).types['helper']?.nodeSet, 'flowgen:inline');
 });
 
 test('snapshots are frozen: cross-layer sharing cannot mutate the hash contract', () => {
@@ -186,7 +232,7 @@ test('provenance differences do not change the content hash', () => {
 });
 
 test('parse reports every structural problem with a path and a code', () => {
-  const broken = parsePaletteSnapshot('{"schemaVersion": 1, "modules": [], "types": {"inject": 42}}');
+  const broken = parsePaletteSnapshot('{"schemaVersion": 1, "nodeSets": [], "types": {"inject": 42}}');
   assert.equal(broken.ok, false);
   if (broken.ok) return;
 
@@ -208,8 +254,7 @@ test('parse rejects unparsable input, unknown schema versions and missing hashes
     assert.ok(future.errors.some((issue) => issue.code === 'unsupported-schema'));
   }
 
-  const noHash = createPaletteSnapshot(sampleInput());
-  const document = JSON.parse(serializePaletteSnapshot(noHash)) as Record<string, unknown>;
+  const document = documentOf(serializePaletteSnapshot(createPaletteSnapshot(sampleInput())));
   delete document['contentHash'];
   const result = parsePaletteSnapshot(JSON.stringify(document));
   assert.equal(result.ok, false);
@@ -219,8 +264,7 @@ test('parse rejects unparsable input, unknown schema versions and missing hashes
 });
 
 test('a hand-edited snapshot is detected unless verification is explicitly disabled', () => {
-  const snapshot = createPaletteSnapshot(sampleInput());
-  const document = documentOf(serializePaletteSnapshot(snapshot));
+  const document = documentOf(serializePaletteSnapshot(createPaletteSnapshot(sampleInput())));
   const types = typesOf(document);
   types['inject'] = { ...(types['inject'] as Record<string, unknown>), outputs: 3 };
   const text = JSON.stringify(document, null, 2);
@@ -240,23 +284,39 @@ test('a hand-edited snapshot is detected unless verification is explicitly disab
 });
 
 test('module/type attribution mismatches are reported', () => {
-  const snapshot = createPaletteSnapshot(sampleInput());
-  const document = documentOf(serializePaletteSnapshot(snapshot));
+  const document = documentOf(serializePaletteSnapshot(createPaletteSnapshot(sampleInput())));
   const types = typesOf(document);
   types['inject'] = { ...(types['inject'] as Record<string, unknown>), module: 'node-red-dashboard' };
-  const text = JSON.stringify(document, null, 2);
 
-  const result = parsePaletteSnapshot(text, { verifyContentHash: false });
+  const result = parsePaletteSnapshot(JSON.stringify(document), { verifyContentHash: false });
   assert.equal(result.ok, false);
   if (!result.ok) {
     assert.ok(result.errors.every((issue) => issue.code === 'module-membership-mismatch'));
-    assert.equal(result.errors.length, 2, 'both directions of the inconsistency are reported');
+    assert.deepEqual(
+      result.errors.map((issue) => issue.path),
+      ['types.inject.module'],
+    );
+  }
+});
+
+test('a type attributed to a node set that does not list it is reported', () => {
+  const document = documentOf(serializePaletteSnapshot(createPaletteSnapshot(sampleInput())));
+  const nodeSets = document['nodeSets'] as Record<string, unknown>[];
+  const injectSet = nodeSets.find((entry) => entry['id'] === 'node-red/inject') as Record<string, unknown>;
+  injectSet['types'] = [];
+
+  const result = parsePaletteSnapshot(JSON.stringify(document), { verifyContentHash: false });
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.deepEqual(
+      result.errors.map((issue) => issue.path),
+      ['nodeSets.node-red/inject.types'],
+    );
   }
 });
 
 test('a type whose key and id disagree is rejected', () => {
-  const snapshot = createPaletteSnapshot(sampleInput());
-  const document = documentOf(serializePaletteSnapshot(snapshot));
+  const document = documentOf(serializePaletteSnapshot(createPaletteSnapshot(sampleInput())));
   const types = typesOf(document);
   types['inject'] = { ...(types['inject'] as Record<string, unknown>), id: 'injectt' };
 
@@ -265,19 +325,30 @@ test('a type whose key and id disagree is rejected', () => {
   if (!result.ok) assert.equal(result.errors[0]?.path, 'types.inject.id');
 });
 
-test('diffPalette classifies additions, removals, changes and module versions', () => {
+test('diffPalette classifies additions, removals, changes and node set versions', () => {
   const before = createPaletteSnapshot(sampleInput());
+  const base = sampleInput();
   const after = createPaletteSnapshot({
-    ...sampleInput(),
+    ...base,
     nodeRedVersion: '5.1.0',
-    modules: [
-      { id: 'node-red', name: 'node-red', version: '5.1.0', types: ['inject', 'function'] },
-      { id: 'node-red-dashboard', name: 'node-red-dashboard', version: '3.6.6', types: ['ui_gauge'] },
-      { id: 'node-red-node-sqlite', name: 'node-red-node-sqlite', version: '1.0.4', types: ['sqlite'] },
+    nodeSets: [
+      nodeSet('node-red/inject', 'inject', 'node-red', '5.1.0', ['inject']),
+      nodeSet('node-red-node-sqlite/sqlite', 'sqlite', 'node-red-node-sqlite', '1.0.4', ['sqlite']),
+      nodeSet('node-red-dashboard/ui_gauge', 'ui_gauge', 'node-red-dashboard', '3.6.6', ['ui_gauge']),
+      nodeSet('node-red/junction', 'junction', 'node-red', '5.1.0', ['junction']),
     ],
     types: [
-      ...sampleInput().types.filter((type) => type.id !== 'mqtt-broker'),
-      paletteType('sqlite', { module: 'node-red-node-sqlite', setVersion: '1.0.4', category: 'storage' }),
+      ...base.types.filter((type) => type.id !== 'mqtt-broker' && type.id !== 'inject'),
+      paletteType('inject', {
+        ...(base.types.find((type) => type.id === 'inject') as ReturnType<typeof paletteType>),
+        version: '5.1.0',
+      }),
+      paletteType('sqlite', {
+        module: 'node-red-node-sqlite',
+        nodeSet: 'node-red-node-sqlite/sqlite',
+        version: '1.0.4',
+        category: 'storage',
+      }),
     ],
   });
 
@@ -285,10 +356,14 @@ test('diffPalette classifies additions, removals, changes and module versions', 
   assert.equal(diff.identical, false);
   assert.deepEqual(diff.added, ['sqlite']);
   assert.deepEqual(diff.removed, ['mqtt-broker']);
-  assert.deepEqual(diff.changed, []);
-  assert.deepEqual(diff.modules, [
-    { id: 'node-red', kind: 'version', from: '5.0.8', to: '5.1.0' },
-    { id: 'node-red-node-sqlite', kind: 'added', from: null, to: '1.0.4' },
+  // Only `inject` changes at the type level: a node set version bump alone does not alter
+  // the type record, so it is reported through `diff.nodeSets` instead.
+  assert.deepEqual(diff.changed.map((change) => change.id), ['inject']);
+  assert.deepEqual(diff.nodeSets, [
+    { id: 'node-red/inject', kind: 'version', from: '5.0.8', to: '5.1.0' },
+    { id: 'node-red/junction', kind: 'version', from: '5.0.8', to: '5.1.0' },
+    { id: 'node-red/mqtt', kind: 'removed', from: '5.0.8', to: null },
+    { id: 'node-red-node-sqlite/sqlite', kind: 'added', from: null, to: '1.0.4' },
   ]);
 
   assert.equal(diffPalette(before, before).identical, true);
@@ -303,12 +378,9 @@ test('diffPalette explains what changed inside a type', () => {
       ...sampleInput().types.filter((type) => type.id !== 'inject'),
       paletteType('inject', {
         ...inject,
-        setVersion: '5.1.0',
+        version: '5.1.0',
         outputs: 2,
-        defaults: {
-          ...inject.defaults,
-          repeat: paletteProperty({ value: '' }),
-        },
+        defaults: { ...inject.defaults, repeat: paletteProperty({ value: '' }) },
       }),
     ],
   });
@@ -316,18 +388,18 @@ test('diffPalette explains what changed inside a type', () => {
   const diff = diffPalette(before, after);
   assert.deepEqual(diff.changed.map((change) => change.id), ['inject']);
   const reasons = diff.changed[0]?.reasons.join(' | ') ?? '';
-  assert.match(reasons, /setVersion 5\.0\.8 → 5\.1\.0/);
+  assert.match(reasons, /version 5\.0\.8 → 5\.1\.0/);
   assert.match(reasons, /outputs 1 → 2/);
   assert.match(reasons, /defaults: added repeat/);
 });
 
-test('describePalette summarises counts per module', () => {
+test('describePalette summarises counts per npm module', () => {
   const summary = describePalette(createPaletteSnapshot(sampleInput()));
-  assert.equal(summary.typeCount, 3);
-  assert.equal(summary.moduleCount, 2);
+  assert.equal(summary.typeCount, 4);
+  assert.equal(summary.nodeSetCount, 4);
   assert.equal(summary.nodeRedVersion, '5.0.8');
   assert.deepEqual(summary.modules, [
-    { id: 'node-red', version: '5.0.8', typeCount: 2 },
-    { id: 'node-red-dashboard', version: '3.6.6', typeCount: 1 },
+    { module: 'node-red', version: '5.0.8', typeCount: 3 },
+    { module: 'node-red-dashboard', version: '3.6.6', typeCount: 1 },
   ]);
 });

@@ -9,7 +9,7 @@
  *    `defaults` entries keep their *declaration* order because the emitter writes node
  *    properties in exactly that order.
  * 2. **Source-independent identity.** The content hash covers only `{schemaVersion,
- *    nodeRedVersion, modules, types}` — never provenance or generator version — so a live
+ *    nodeRedVersion, nodeSets, types}` — never provenance or generator version — so a live
  *    instance and the same installation scanned from disk produce the same hash, and
  *    regeneration is a no-op when nothing changed.
  */
@@ -21,7 +21,7 @@ import { err, ok, type Result } from '../result.ts';
 import {
   EMPTY_DYNAMICS,
   PALETTE_SCHEMA_VERSION,
-  type PaletteModule,
+  type PaletteNodeSet,
   type PaletteProperty,
   type PaletteProvenance,
   type PaletteType,
@@ -40,18 +40,18 @@ export interface PaletteSnapshot {
   readonly nodeRedVersion: string | null;
   readonly contentHash: string;
   readonly provenance: PaletteProvenance;
-  /** Sorted by id; each module's `types` array is sorted as well. */
-  readonly modules: readonly PaletteModule[];
+  /** Node sets as reported by the instance, sorted by id; each set's `types` is sorted too. */
+  readonly nodeSets: readonly PaletteNodeSet[];
   /** Keyed by type id, insertion order sorted by id. */
   readonly types: Readonly<Record<string, PaletteType>>;
 }
 
 /** The part of a snapshot that identity is computed over. */
-export type PaletteContent = Pick<PaletteSnapshot, 'schemaVersion' | 'nodeRedVersion' | 'modules' | 'types'>;
+export type PaletteContent = Pick<PaletteSnapshot, 'schemaVersion' | 'nodeRedVersion' | 'nodeSets' | 'types'>;
 
 export interface PaletteSnapshotInput {
   readonly nodeRedVersion: string | null;
-  readonly modules: readonly PaletteModule[];
+  readonly nodeSets: readonly PaletteNodeSet[];
   readonly types: readonly PaletteType[];
   readonly provenance: PaletteProvenance;
   readonly generator?: string;
@@ -72,7 +72,7 @@ export class PaletteSnapshotError extends Error {
 // --------------------------------------------------------------------------------------
 
 /**
- * Normalises a raw extraction result into a snapshot: modules and types are sorted by id
+ * Normalises a raw extraction result into a snapshot: node sets and types are sorted by id
  * (extraction order is an implementation detail and must not leak into the hash), the
  * content hash is computed and the whole structure is frozen.
  *
@@ -92,14 +92,14 @@ export function createPaletteSnapshot(input: PaletteSnapshotInput): PaletteSnaps
     types[id] = byId.get(id) as PaletteType;
   }
 
-  const modules: PaletteModule[] = input.modules
-    .map((module) => ({ ...module, types: [...module.types].sort() }))
+  const nodeSets: PaletteNodeSet[] = input.nodeSets
+    .map((nodeSet) => ({ ...nodeSet, types: [...nodeSet.types].sort() }))
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
   const content: PaletteContent = {
     schemaVersion: PALETTE_SCHEMA_VERSION,
     nodeRedVersion: input.nodeRedVersion,
-    modules,
+    nodeSets,
     types,
   };
 
@@ -116,7 +116,7 @@ export function snapshotContent(snapshot: PaletteSnapshot): PaletteContent {
   return {
     schemaVersion: snapshot.schemaVersion,
     nodeRedVersion: snapshot.nodeRedVersion,
-    modules: snapshot.modules,
+    nodeSets: snapshot.nodeSets,
     types: snapshot.types,
   };
 }
@@ -139,7 +139,7 @@ export function serializePaletteSnapshot(snapshot: PaletteSnapshot, options: Ser
     nodeRedVersion: snapshot.nodeRedVersion,
     contentHash: snapshot.contentHash,
     provenance: wireProvenance(snapshot.provenance),
-    modules: snapshot.modules.map(wireModule),
+    nodeSets: snapshot.nodeSets.map(wireNodeSet),
     types: wireTypes(snapshot.types),
   };
   return `${JSON.stringify(wire, null, indent)}\n`;
@@ -150,7 +150,7 @@ export function serializePaletteContent(content: PaletteContent, options: Serial
   const wire: Record<string, unknown> = {
     schemaVersion: content.schemaVersion,
     nodeRedVersion: content.nodeRedVersion,
-    modules: content.modules.map(wireModule),
+    nodeSets: content.nodeSets.map(wireNodeSet),
     types: wireTypes(content.types),
   };
   return JSON.stringify(wire, null, indent);
@@ -179,8 +179,18 @@ function wireProvenance(provenance: PaletteProvenance): Record<string, unknown> 
   return wire;
 }
 
-function wireModule(module: PaletteModule): Record<string, unknown> {
-  return { id: module.id, name: module.name, version: module.version, types: [...module.types] };
+function wireNodeSet(nodeSet: PaletteNodeSet): Record<string, unknown> {
+  const wire: Record<string, unknown> = {
+    id: nodeSet.id,
+    name: nodeSet.name,
+    module: nodeSet.module,
+    version: nodeSet.version,
+  };
+  if (!nodeSet.enabled) wire['enabled'] = false;
+  if (nodeSet.local) wire['local'] = true;
+  if (nodeSet.user) wire['user'] = true;
+  wire['types'] = [...nodeSet.types];
+  return wire;
 }
 
 function wireTypes(types: Readonly<Record<string, PaletteType>>): Record<string, unknown> {
@@ -192,7 +202,11 @@ function wireTypes(types: Readonly<Record<string, PaletteType>>): Record<string,
 }
 
 function wireType(type: PaletteType): Record<string, unknown> {
-  const wire: Record<string, unknown> = { id: type.id, module: type.module, setVersion: type.setVersion };
+  const wire: Record<string, unknown> = { id: type.id, module: type.module };
+  // The node set id repeats the module name in hand-written entries; only write it when it
+  // carries information.
+  if (type.nodeSet !== type.module) wire['nodeSet'] = type.nodeSet;
+  wire['version'] = type.version;
   if (type.category !== null) wire['category'] = type.category;
   if (type.paletteLabel !== null) wire['paletteLabel'] = type.paletteLabel;
   if (type.color !== null) wire['color'] = type.color;
@@ -201,6 +215,7 @@ function wireType(type: PaletteType): Record<string, unknown> {
   if (type.inputs !== null) wire['inputs'] = type.inputs;
   if (type.outputs !== null) wire['outputs'] = type.outputs;
   if (type.isConfig) wire['isConfig'] = true;
+  if (type.synthetic) wire['synthetic'] = true;
   if (Object.keys(type.refs).length > 0) wire['refs'] = wireRefs(type.refs);
   if (hasDynamics(type.dynamics)) wire['dynamics'] = wireDynamics(type.dynamics);
   if (Object.keys(type.defaults).length > 0) wire['defaults'] = wireProperties(type.defaults);
@@ -311,7 +326,7 @@ export function parsePaletteSnapshot(
   const nodeRedVersion = optionalString(root['nodeRedVersion'], 'nodeRedVersion', issues);
   const contentHash = optionalString(root['contentHash'], 'contentHash', issues) ?? '';
   const provenance = decodeProvenance(root['provenance'], issues);
-  const modules = decodeModules(root['modules'], issues);
+  const nodeSets = decodeNodeSets(root['nodeSets'], issues);
   const types = decodeTypes(root['types'], issues);
 
   if (issues.length > 0) return err(issues);
@@ -319,7 +334,7 @@ export function parsePaletteSnapshot(
   const content: PaletteContent = {
     schemaVersion: schemaVersion as number,
     nodeRedVersion,
-    modules: modules as readonly PaletteModule[],
+    nodeSets: nodeSets as readonly PaletteNodeSet[],
     types: types as Readonly<Record<string, PaletteType>>,
   };
   const snapshot: PaletteSnapshot = { ...content, generator, contentHash, provenance };
@@ -346,43 +361,49 @@ export function parsePaletteSnapshot(
 
 function checkMembership(snapshot: PaletteSnapshot): readonly PaletteSnapshotIssue[] {
   const issues: PaletteSnapshotIssue[] = [];
-  const known = new Set(snapshot.modules.map((module) => module.id));
+  const known = new Set(snapshot.nodeSets.map((nodeSet) => nodeSet.id));
 
-  for (const module of snapshot.modules) {
-    for (const typeId of module.types) {
+  for (const nodeSet of snapshot.nodeSets) {
+    for (const typeId of nodeSet.types) {
       const type = snapshot.types[typeId];
       if (type === undefined) {
         issues.push({
           code: 'module-membership-mismatch',
-          path: `modules.${module.id}.types`,
-          message: `module lists type "${typeId}" which is not defined`,
+          path: `nodeSets.${nodeSet.id}.types`,
+          message: `node set lists type "${typeId}" which is not defined`,
         });
-      } else if (type.module !== module.id) {
+      } else if (type.nodeSet !== nodeSet.id) {
+        issues.push({
+          code: 'module-membership-mismatch',
+          path: `types.${typeId}.nodeSet`,
+          message: `type is attributed to node set "${type.nodeSet}" but listed under "${nodeSet.id}"`,
+        });
+      } else if (type.module !== nodeSet.module) {
         issues.push({
           code: 'module-membership-mismatch',
           path: `types.${typeId}.module`,
-          message: `type is attributed to "${type.module}" but listed under "${module.id}"`,
+          message: `type names module "${type.module}" but node set "${nodeSet.id}" belongs to "${nodeSet.module}"`,
         });
       }
     }
   }
 
   for (const [typeId, type] of Object.entries(snapshot.types)) {
-    if (!known.has(type.module)) {
+    if (!known.has(type.nodeSet)) {
       issues.push({
         code: 'module-membership-mismatch',
-        path: `types.${typeId}.module`,
-        message: `unknown module "${type.module}"`,
+        path: `types.${typeId}.nodeSet`,
+        message: `unknown node set "${type.nodeSet}"`,
       });
-    } else {
-      const module = snapshot.modules.find((candidate) => candidate.id === type.module) as PaletteModule;
-      if (!module.types.includes(typeId)) {
-        issues.push({
-          code: 'module-membership-mismatch',
-          path: `modules.${module.id}.types`,
-          message: `module does not list its own type "${typeId}"`,
-        });
-      }
+      continue;
+    }
+    const nodeSet = snapshot.nodeSets.find((candidate) => candidate.id === type.nodeSet) as PaletteNodeSet;
+    if (!nodeSet.types.includes(typeId)) {
+      issues.push({
+        code: 'module-membership-mismatch',
+        path: `nodeSets.${nodeSet.id}.types`,
+        message: `node set does not list its own type "${typeId}"`,
+      });
     }
   }
 
@@ -410,21 +431,33 @@ function decodeProvenance(raw: unknown, issues: PaletteSnapshotIssue[]): Palette
   };
 }
 
-function decodeModules(raw: unknown, issues: PaletteSnapshotIssue[]): readonly PaletteModule[] | null {
-  const list = readArray(raw, 'modules', issues);
+function decodeNodeSets(raw: unknown, issues: PaletteSnapshotIssue[]): readonly PaletteNodeSet[] | null {
+  const list = readArray(raw, 'nodeSets', issues);
   if (list === null) return null;
-  const modules: PaletteModule[] = [];
+  const nodeSets: PaletteNodeSet[] = [];
   list.forEach((entry, index) => {
-    const path = `modules[${index}]`;
+    const path = `nodeSets[${index}]`;
     const record = readObject(entry, path, issues);
     if (record === null) return;
     const id = requireString(record['id'], `${path}.id`, issues);
     const name = optionalString(record['name'], `${path}.name`, issues) ?? id ?? '';
+    const module = optionalString(record['module'], `${path}.module`, issues) ?? name;
     const version = optionalString(record['version'], `${path}.version`, issues) ?? '';
     const types = optionalStringArray(record['types'], `${path}.types`, issues) ?? [];
-    if (id !== null) modules.push({ id, name, version, types });
+    if (id !== null) {
+      nodeSets.push({
+        id,
+        name,
+        module,
+        version,
+        enabled: record['enabled'] !== false,
+        local: record['local'] === true,
+        user: record['user'] === true,
+        types,
+      });
+    }
   });
-  return modules;
+  return nodeSets;
 }
 
 function decodeTypes(
@@ -458,11 +491,13 @@ function decodeType(id: string, raw: unknown, path: string, issues: PaletteSnaps
   const credentials = decodeProperties(record['credentials'], `${path}.credentials`, issues) ?? {};
   const category = optionalString(record['category'], `${path}.category`, issues);
   const dynamics = decodeDynamics(record['dynamics'], `${path}.dynamics`, issues);
+  const module = optionalString(record['module'], `${path}.module`, issues) ?? '';
 
   return {
     id,
-    module: optionalString(record['module'], `${path}.module`, issues) ?? '',
-    setVersion: optionalString(record['setVersion'], `${path}.setVersion`, issues) ?? '',
+    module,
+    nodeSet: optionalString(record['nodeSet'], `${path}.nodeSet`, issues) ?? module,
+    version: optionalString(record['version'], `${path}.version`, issues) ?? '',
     category,
     paletteLabel: optionalString(record['paletteLabel'], `${path}.paletteLabel`, issues),
     color: optionalString(record['color'], `${path}.color`, issues),
@@ -471,6 +506,7 @@ function decodeType(id: string, raw: unknown, path: string, issues: PaletteSnaps
     inputs: optionalNumber(record['inputs'], `${path}.inputs`, issues),
     outputs: optionalNumber(record['outputs'], `${path}.outputs`, issues),
     isConfig: category === 'config' || record['isConfig'] === true,
+    synthetic: record['synthetic'] === true,
     refs: decodeRefs(record['refs'], `${path}.refs`, issues) ?? {},
     defaults,
     credentials,
@@ -631,11 +667,11 @@ function optionalStringArray(raw: unknown, path: string, issues: PaletteSnapshot
 
 export interface PaletteTypeChange {
   readonly id: string;
-  /** Short, human-readable reasons, e.g. `defaults: added crontab`, `setVersion 3.6.6 → 3.6.2`. */
+  /** Short, human-readable reasons, e.g. `defaults: added crontab`, `version 3.6.6 → 3.6.2`. */
   readonly reasons: readonly string[];
 }
 
-export interface PaletteModuleChange {
+export interface PaletteNodeSetChange {
   readonly id: string;
   readonly kind: 'added' | 'removed' | 'version';
   readonly from: string | null;
@@ -647,7 +683,7 @@ export interface PaletteDiff {
   readonly added: readonly string[];
   readonly removed: readonly string[];
   readonly changed: readonly PaletteTypeChange[];
-  readonly modules: readonly PaletteModuleChange[];
+  readonly nodeSets: readonly PaletteNodeSetChange[];
 }
 
 /** Compares two snapshots by content (provenance and generator are ignored). */
@@ -666,37 +702,39 @@ export function diffPalette(before: PaletteSnapshot, after: PaletteSnapshot): Pa
     changed.push({ id, reasons: describeTypeChange(from, to) });
   }
 
-  const modules: PaletteModuleChange[] = [];
-  const beforeModules = new Map(before.modules.map((module) => [module.id, module]));
-  const afterModules = new Map(after.modules.map((module) => [module.id, module]));
-  for (const [id, module] of beforeModules) {
-    const next = afterModules.get(id);
+  const nodeSets: PaletteNodeSetChange[] = [];
+  const beforeSets = new Map(before.nodeSets.map((nodeSet) => [nodeSet.id, nodeSet]));
+  const afterSets = new Map(after.nodeSets.map((nodeSet) => [nodeSet.id, nodeSet]));
+  for (const [id, nodeSet] of beforeSets) {
+    const next = afterSets.get(id);
     if (next === undefined) {
-      modules.push({ id, kind: 'removed', from: module.version, to: null });
-    } else if (next.version !== module.version) {
-      modules.push({ id, kind: 'version', from: module.version, to: next.version });
+      nodeSets.push({ id, kind: 'removed', from: nodeSet.version, to: null });
+    } else if (next.version !== nodeSet.version) {
+      nodeSets.push({ id, kind: 'version', from: nodeSet.version, to: next.version });
     }
   }
-  for (const [id, module] of afterModules) {
-    if (!beforeModules.has(id)) modules.push({ id, kind: 'added', from: null, to: module.version });
+  for (const [id, nodeSet] of afterSets) {
+    if (!beforeSets.has(id)) nodeSets.push({ id, kind: 'added', from: null, to: nodeSet.version });
   }
 
   return {
-    identical: added.length === 0 && removed.length === 0 && changed.length === 0 && modules.length === 0,
+    identical: added.length === 0 && removed.length === 0 && changed.length === 0 && nodeSets.length === 0,
     added,
     removed,
     changed,
-    modules,
+    nodeSets,
   };
 }
 
 function describeTypeChange(from: PaletteType, to: PaletteType): readonly string[] {
   const reasons: string[] = [];
-  if (from.setVersion !== to.setVersion) reasons.push(`setVersion ${from.setVersion} → ${to.setVersion}`);
+  if (from.version !== to.version) reasons.push(`version ${from.version} → ${to.version}`);
+  if (from.nodeSet !== to.nodeSet) reasons.push(`nodeSet ${from.nodeSet} → ${to.nodeSet}`);
   for (const field of ['category', 'paletteLabel', 'color', 'icon', 'align', 'inputs', 'outputs'] as const) {
     if (from[field] !== to[field]) reasons.push(`${field} ${String(from[field])} → ${String(to[field])}`);
   }
   if (from.isConfig !== to.isConfig) reasons.push(`isConfig ${String(from.isConfig)} → ${String(to.isConfig)}`);
+  if (from.synthetic !== to.synthetic) reasons.push(`synthetic ${String(from.synthetic)} → ${String(to.synthetic)}`);
 
   const defaults = describePropertyChange(from.defaults, to.defaults, 'defaults');
   reasons.push(...defaults);
@@ -730,22 +768,29 @@ export interface PaletteSummary {
   readonly schemaVersion: number;
   readonly nodeRedVersion: string | null;
   readonly typeCount: number;
-  readonly moduleCount: number;
-  readonly modules: readonly { readonly id: string; readonly version: string; readonly typeCount: number }[];
+  readonly nodeSetCount: number;
+  /** Distinct npm modules that provide at least one type, with their versions. */
+  readonly modules: readonly { readonly module: string; readonly version: string; readonly typeCount: number }[];
 }
 
 /** Compact description for CLI output and test assertions. */
 export function describePalette(snapshot: PaletteSnapshot): PaletteSummary {
+  const modules = new Map<string, { module: string; version: string; typeCount: number }>();
+  for (const type of Object.values(snapshot.types)) {
+    const entry = modules.get(type.module);
+    if (entry === undefined) {
+      modules.set(type.module, { module: type.module, version: type.version, typeCount: 1 });
+    } else {
+      entry.typeCount += 1;
+    }
+  }
+
   return {
     schemaVersion: snapshot.schemaVersion,
     nodeRedVersion: snapshot.nodeRedVersion,
     typeCount: Object.keys(snapshot.types).length,
-    moduleCount: snapshot.modules.length,
-    modules: snapshot.modules.map((module) => ({
-      id: module.id,
-      version: module.version,
-      typeCount: module.types.length,
-    })),
+    nodeSetCount: snapshot.nodeSets.length,
+    modules: [...modules.values()].sort((a, b) => (a.module < b.module ? -1 : 1)),
   };
 }
 

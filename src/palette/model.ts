@@ -103,10 +103,21 @@ export interface TypeDynamics {
 /** One registered node type, normalised out of `RED.nodes.registerType(...)`. */
 export interface PaletteType {
   readonly id: string;
-  /** Id of the node set that registered this type (attribution). */
+  /**
+   * npm package that provides the type (`node-red`, `node-red-dashboard`, `flowgen:inline`).
+   * This is the key the module manifest (`global-config.modules`) and the generated type
+   * files are grouped by.
+   */
   readonly module: string;
-  /** Version of that node set at capture time. */
-  readonly setVersion: string;
+  /**
+   * Node-RED *node set* id that registered the type (`node-red/inject`,
+   * `node-red-dashboard/ui_gauge`) — the attribution unit Node-RED itself reports and the
+   * one carried by the `<!-- --- [red-module:<setId>] --- -->` markers in `GET /nodes`.
+   * Equals `module` when a hand-written overlay declares a type directly.
+   */
+  readonly nodeSet: string;
+  /** Version of `module` at capture time. */
+  readonly version: string;
   readonly category: string | null;
   /**
    * Display label. May be an i18n key (`node-red-dashboard/ui_base:ui_base.label.category`),
@@ -120,6 +131,13 @@ export interface PaletteType {
   readonly outputs: number | null;
   /** The editor's rule: a config node is a type whose category is `"config"`. */
   readonly isConfig: boolean;
+  /**
+   * True when no editor registration could be found and the type is known only from the
+   * runtime node list — `junction` is the built-in example: it is a real node type that the
+   * editor deliberately keeps out of the palette. Such a type has no declared defaults, so
+   * consumers must treat its properties as an open bag instead of a closed set.
+   */
+  readonly synthetic: boolean;
   readonly refs: Readonly<Record<string, RefSpec>>;
   /** Declaration order is preserved: the emitter writes defaults in this order. */
   readonly defaults: Readonly<Record<string, PaletteProperty>>;
@@ -127,12 +145,23 @@ export interface PaletteType {
   readonly dynamics: TypeDynamics;
 }
 
-/** One node set as reported by `GET /nodes` (or synthesised from a filesystem scan). */
-export interface PaletteModule {
+/**
+ * One node set as reported by `GET /nodes` (or synthesised from a filesystem scan).
+ * Node-RED uses one set per node definition file, so most sets contribute exactly one type;
+ * `node-red/link` contributes three.
+ */
+export interface PaletteNodeSet {
+  /** Node set id, e.g. `node-red/inject`. */
   readonly id: string;
-  /** Module name as reported by Node-RED; usually identical to `id`, not guaranteed. */
   readonly name: string;
+  /** npm package that provides the set. */
+  readonly module: string;
   readonly version: string;
+  readonly enabled: boolean;
+  /** Installed into the user directory rather than shipped with Node-RED. */
+  readonly local: boolean;
+  /** Contributed by a user-installed module. */
+  readonly user: boolean;
   /** Sorted type ids belonging to this set. */
   readonly types: readonly string[];
 }
@@ -217,10 +246,12 @@ export function paletteType(id: string, init: Partial<PaletteType> = {}): Palett
   for (const [name, property] of Object.entries(defaults)) {
     if (property.type !== null) refs[name] = deriveRefSpec(property.type);
   }
+  const module = init.module ?? 'flowgen:inline';
   return {
     id,
-    module: init.module ?? 'flowgen:inline',
-    setVersion: init.setVersion ?? '0.0.0',
+    module,
+    nodeSet: init.nodeSet ?? module,
+    version: init.version ?? '0.0.0',
     category: init.category ?? null,
     paletteLabel: init.paletteLabel ?? null,
     color: init.color ?? null,
@@ -229,6 +260,7 @@ export function paletteType(id: string, init: Partial<PaletteType> = {}): Palett
     inputs: init.inputs ?? null,
     outputs: init.outputs ?? null,
     isConfig: init.isConfig ?? init.category === 'config',
+    synthetic: init.synthetic ?? false,
     refs: init.refs ?? refs,
     defaults,
     credentials: init.credentials ?? {},
