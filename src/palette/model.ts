@@ -90,6 +90,21 @@ export interface PaletteProperty {
   readonly dynamic: boolean;
 }
 
+/**
+ * A declared subflow parameter (flow-file `env` entry of a `type: "subflow"` definition).
+ *
+ * Subflow instances carry their parameter overrides in a sibling `env` object rather than in
+ * node properties, so these are kept separate from `defaults` on purpose.
+ */
+export interface PaletteParameter {
+  readonly name: string;
+  /** Node-RED environment-variable type: `str`, `num`, `bool`, `json`, `cred`, `env`, … */
+  readonly type: string;
+  readonly value: unknown;
+  /** Editor UI descriptor (valid values, list options); opaque on purpose. */
+  readonly ui: unknown;
+}
+
 /** Which parts of a type's declaration were functions rather than literals. */
 export interface TypeDynamics {
   readonly inputs: boolean;
@@ -142,6 +157,11 @@ export interface PaletteType {
   /** Declaration order is preserved: the emitter writes defaults in this order. */
   readonly defaults: Readonly<Record<string, PaletteProperty>>;
   readonly credentials: Readonly<Record<string, PaletteProperty>>;
+  /**
+   * Subflow parameters, in declaration order. Only synthesised subflow instance types carry
+   * them; ordinary node types have none.
+   */
+  readonly params: readonly PaletteParameter[];
   readonly dynamics: TypeDynamics;
 }
 
@@ -264,6 +284,7 @@ export function paletteType(id: string, init: Partial<PaletteType> = {}): Palett
     refs: init.refs ?? refs,
     defaults,
     credentials: init.credentials ?? {},
+    params: init.params ?? [],
     dynamics: init.dynamics ?? EMPTY_DYNAMICS,
   };
 }

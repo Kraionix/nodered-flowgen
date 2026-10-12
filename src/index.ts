@@ -26,6 +26,7 @@ export {
   subflowTypeId,
   SUBFLOW_TYPE_PREFIX,
   type PaletteNodeSet,
+  type PaletteParameter,
   type PaletteProperty,
   type PaletteProvenance,
   type PaletteSourceKind,

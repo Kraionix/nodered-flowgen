@@ -71,6 +71,7 @@ export function normalizeRegisteredType(registered: RegisteredType, context: Nor
     refs,
     defaults: defaults.properties,
     credentials: credentials.properties,
+    params: [],
     dynamics,
   };
 }
@@ -102,6 +103,7 @@ export function synthesizeType(typeId: string, context: NormalizeContext): Palet
     refs: {},
     defaults: {},
     credentials: {},
+    params: [],
     dynamics: { inputs: false, outputs: false, paletteLabel: false, category: false, defaults: [] },
   };
 }

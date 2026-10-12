@@ -22,6 +22,7 @@ import {
   EMPTY_DYNAMICS,
   PALETTE_SCHEMA_VERSION,
   type PaletteNodeSet,
+  type PaletteParameter,
   type PaletteProperty,
   type PaletteProvenance,
   type PaletteType,
@@ -220,6 +221,14 @@ function wireType(type: PaletteType): Record<string, unknown> {
   if (hasDynamics(type.dynamics)) wire['dynamics'] = wireDynamics(type.dynamics);
   if (Object.keys(type.defaults).length > 0) wire['defaults'] = wireProperties(type.defaults);
   if (Object.keys(type.credentials).length > 0) wire['credentials'] = wireProperties(type.credentials);
+  if (type.params.length > 0) wire['params'] = type.params.map(wireParameter);
+  return wire;
+}
+
+function wireParameter(parameter: PaletteParameter): Record<string, unknown> {
+  const wire: Record<string, unknown> = { name: parameter.name, type: parameter.type };
+  if (parameter.value !== undefined) wire['value'] = parameter.value;
+  if (parameter.ui !== undefined) wire['ui'] = parameter.ui;
   return wire;
 }
 
@@ -510,8 +519,30 @@ function decodeType(id: string, raw: unknown, path: string, issues: PaletteSnaps
     refs: decodeRefs(record['refs'], `${path}.refs`, issues) ?? {},
     defaults,
     credentials,
+    params: decodeParams(record['params'], `${path}.params`, issues),
     dynamics,
   };
+}
+
+function decodeParams(raw: unknown, path: string, issues: PaletteSnapshotIssue[]): readonly PaletteParameter[] {
+  if (raw === undefined || raw === null) return [];
+  const list = readArray(raw, path, issues);
+  if (list === null) return [];
+  const params: PaletteParameter[] = [];
+  list.forEach((entry, index) => {
+    const entryPath = `${path}[${index}]`;
+    const record = readObject(entry, entryPath, issues);
+    if (record === null) return;
+    const name = requireString(record['name'], `${entryPath}.name`, issues);
+    if (name === null) return;
+    params.push({
+      name,
+      type: optionalString(record['type'], `${entryPath}.type`, issues) ?? 'str',
+      value: record['value'],
+      ui: record['ui'],
+    });
+  });
+  return params;
 }
 
 function decodeDynamics(raw: unknown, path: string, issues: PaletteSnapshotIssue[]): TypeDynamics {
@@ -673,9 +704,11 @@ export interface PaletteTypeChange {
 
 export interface PaletteNodeSetChange {
   readonly id: string;
-  readonly kind: 'added' | 'removed' | 'version';
+  readonly kind: 'added' | 'removed' | 'version' | 'metadata';
   readonly from: string | null;
   readonly to: string | null;
+  /** Field-level detail for `metadata` changes. */
+  readonly reasons?: readonly string[];
 }
 
 export interface PaletteDiff {
@@ -711,6 +744,9 @@ export function diffPalette(before: PaletteSnapshot, after: PaletteSnapshot): Pa
       nodeSets.push({ id, kind: 'removed', from: nodeSet.version, to: null });
     } else if (next.version !== nodeSet.version) {
       nodeSets.push({ id, kind: 'version', from: nodeSet.version, to: next.version });
+    } else {
+      const reasons = describeNodeSetChange(nodeSet, next);
+      if (reasons.length > 0) nodeSets.push({ id, kind: 'metadata', from: null, to: null, reasons });
     }
   }
   for (const [id, nodeSet] of afterSets) {
@@ -724,6 +760,18 @@ export function diffPalette(before: PaletteSnapshot, after: PaletteSnapshot): Pa
     changed,
     nodeSets,
   };
+}
+
+function describeNodeSetChange(from: PaletteNodeSet, to: PaletteNodeSet): readonly string[] {
+  const reasons: string[] = [];
+  for (const field of ['name', 'module'] as const) {
+    if (from[field] !== to[field]) reasons.push(`${field} ${String(from[field])} → ${String(to[field])}`);
+  }
+  for (const field of ['enabled', 'local', 'user'] as const) {
+    if (from[field] !== to[field]) reasons.push(`${field} ${String(from[field])} → ${String(to[field])}`);
+  }
+  if (wireJson([...from.types].sort()) !== wireJson([...to.types].sort())) reasons.push('type membership changed');
+  return reasons;
 }
 
 function describeTypeChange(from: PaletteType, to: PaletteType): readonly string[] {
@@ -742,6 +790,7 @@ function describeTypeChange(from: PaletteType, to: PaletteType): readonly string
   reasons.push(...credentials);
 
   if (wireJson(from.refs) !== wireJson(to.refs)) reasons.push('references changed');
+  if (wireJson(from.params) !== wireJson(to.params)) reasons.push('subflow parameters changed');
   if (wireJson(from.dynamics) !== wireJson(to.dynamics)) reasons.push('dynamic declarations changed');
   return reasons.length > 0 ? reasons : ['declaration changed'];
 }
