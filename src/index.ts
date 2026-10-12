@@ -47,6 +47,88 @@ export {
   type TypeDynamics,
 } from './palette/model.ts';
 
+export * from './validate/index.ts';
+export {
+  countBySeverity,
+  exitCodeFor,
+  hasErrors,
+  type BuiltinProblemCode,
+  type Problem,
+  type ProblemCode,
+  type Severity,
+} from './validate/problem.ts';
+export {
+  formatProblems,
+  formatSkipped,
+  runValidators,
+  type Capability,
+  type FormatOptions,
+  type SkippedValidator,
+  type ValidationContext,
+  type ValidationReport,
+  type ValidationRun,
+  type Validator,
+} from './validate/report.ts';
+
+export {
+  parseFlowFile,
+  parseFlowSetText,
+  type ImportOptions,
+} from './import/fromFlowJson.ts';
+
+export {
+  allIds,
+  eachConfig,
+  eachGroup,
+  eachNode,
+  eachSubflow,
+  EMPTY_FLOW_SET,
+  emptyNodeProps,
+  findConfig,
+  findNode,
+  INTERNAL_NODE_KEYS,
+  STRUCTURAL_NODE_KEYS,
+  wireArity,
+  type ConfigNode,
+  type Credentials,
+  type EntityId,
+  type EnvParam,
+  type Flow,
+  type FlowSet,
+  type Geometry,
+  type Group,
+  type Node,
+  type NodeProps,
+  type SubflowDef,
+  type SubflowPortLink,
+  type SubflowPorts,
+} from './model/entities.ts';
+
+export { createIdAllocator, slugify, type IdAllocator, type IdPolicy } from './model/ids.ts';
+
+export {
+  effectiveInputCount,
+  effectiveOutputCount,
+  normalizeConfig,
+  normalizeFlowSet,
+  normalizeFlowSetWithFixes,
+  normalizeGroup,
+  normalizeNode,
+  type NormalizeContext,
+} from './model/normalize.ts';
+
+export {
+  emitConfig,
+  emitEntries,
+  emitFlow,
+  emitFlowSet,
+  emitGlobalConfig,
+  emitGroup,
+  emitNode,
+  emitSubflow,
+  type EmitOptions,
+} from './emit/flowJson.ts';
+
 export {
   DEFAULT_PACKAGE_NAME,
   DEFAULT_TYPES_DIRECTORY,
@@ -131,11 +213,7 @@ export {
   type RegisteredType,
 } from './palette/extract/registerType.ts';
 
-export {
-  normalizeRegisteredType,
-  synthesizeType,
-  type NormalizeContext,
-} from './palette/extract/normalize.ts';
+export { normalizeRegisteredType, synthesizeType } from './palette/extract/normalize.ts';
 
 export {
   createPaletteSnapshot,

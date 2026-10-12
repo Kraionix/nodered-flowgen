@@ -20,6 +20,8 @@
 
 import type { PaletteType } from '../palette/model.ts';
 
+import type { Problem } from '../validate/problem.ts';
+
 import type { ConfigNode, EnvParam, FlowSet, Group, Node, NodeProps } from './entities.ts';
 
 export interface NormalizeContext {
@@ -27,24 +29,43 @@ export interface NormalizeContext {
 }
 
 export function normalizeFlowSet(flowSet: FlowSet, context: NormalizeContext): FlowSet {
+  return normalizeFlowSetWithFixes(flowSet, context).flowSet;
+}
+
+/**
+ * Normalisation that reports what it changed.
+ *
+ * Wire padding is a *fix*, not a validation failure — the editor does the same on export — but
+ * silently repairing a flow file would hide a real authoring bug, so every repair is reported
+ * as an info-level problem the CLI can print.
+ */
+export function normalizeFlowSetWithFixes(
+  flowSet: FlowSet,
+  context: NormalizeContext,
+): { readonly flowSet: FlowSet; readonly fixes: readonly Problem[] } {
+  const fixes: Problem[] = [];
+  return { flowSet: normalizeInner(flowSet, context, fixes), fixes };
+}
+
+function normalizeInner(flowSet: FlowSet, context: NormalizeContext, fixes: Problem[]): FlowSet {
   return {
     ...flowSet,
     subflows: flowSet.subflows.map((subflow) => ({
       ...subflow,
       env: subflow.env.map(normalizeEnvParam),
-      nodes: subflow.nodes.map((node) => normalizeNode(node, context)),
+      nodes: subflow.nodes.map((node) => normalizeNodeWithFixes(node, context, fixes)),
       groups: subflow.groups.map(normalizeGroup),
       configs: subflow.configs.map(normalizeConfig),
     })),
     configs: flowSet.configs.map(normalizeConfig),
-    loose: flowSet.loose.map((node) => normalizeNode(node, context)),
+    loose: flowSet.loose.map((node) => normalizeNodeWithFixes(node, context, fixes)),
     flows: flowSet.flows.map((flow) => ({
       ...flow,
       env: emptyToUndefined(flow.env),
       disabled: falseToUndefined(flow.disabled),
       locked: falseToUndefined(flow.locked),
       groups: flow.groups.map(normalizeGroup),
-      nodes: flow.nodes.map((node) => normalizeNode(node, context)),
+      nodes: flow.nodes.map((node) => normalizeNodeWithFixes(node, context, fixes)),
       configs: flow.configs.map(normalizeConfig),
     })),
     modules: normalizeModules(flowSet.modules),
@@ -52,13 +73,28 @@ export function normalizeFlowSet(flowSet: FlowSet, context: NormalizeContext): F
 }
 
 export function normalizeNode(node: Node, context: NormalizeContext): Node {
+  return normalizeNodeWithFixes(node, context, []);
+}
+
+function normalizeNodeWithFixes(node: Node, context: NormalizeContext, fixes: Problem[]): Node {
   const type = context.palette[node.type] ?? null;
+  const wires = normalizeWires(node, type);
+  if (wires.length !== node.wires.length) {
+    fixes.push({
+      code: 'normalize/wire-arity',
+      severity: 'info',
+      entity: node.id,
+      path: 'wires',
+      message: `wires adjusted from ${node.wires.length} to ${wires.length} array(s) to match the declared port count`,
+      hint: 'the editor always writes exactly one array per output',
+    });
+  }
 
   return {
     ...node,
     disabled: falseToUndefined(node.disabled),
     env: emptyToUndefined(node.env?.map(normalizeEnvParam)),
-    wires: normalizeWires(node, type),
+    wires,
     inputLabels: labelsOrUndefined(node.inputLabels, effectiveInputCount(type, node.props), node),
     outputLabels: labelsOrUndefined(node.outputLabels, effectiveOutputCount(type, node.props), node),
     icon: emptyStringToUndefined(node.icon),
