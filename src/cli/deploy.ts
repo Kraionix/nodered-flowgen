@@ -12,7 +12,7 @@
  */
 
 import { AdminApiError, type AdminApiClient } from '../io/adminApi.ts';
-import { isNoop, planDeployment, summarizePlan, type Plan } from '../io/plan.ts';
+import { isNoop, planMerge, summarizePlan, type DeploymentPlan } from '../io/plan.ts';
 import { parseFlowFile } from '../import/fromFlowJson.ts';
 import type { FlowSet } from '../model/entities.ts';
 import type { PaletteSnapshot } from '../palette/snapshot.ts';
@@ -38,12 +38,14 @@ export const TARGET_OPTIONS: readonly OptionSpec[] = [
 export interface LivePlan {
   readonly client: AdminApiClient;
   readonly rev: string;
-  readonly plan: Plan;
+  readonly plan: DeploymentPlan;
 }
 
 export interface PlanOptions {
   readonly prune: boolean;
   readonly diffGeometry: boolean;
+  /** Deploy a container under a fresh id when its id already exists on the target. */
+  readonly reassign?: boolean;
 }
 
 /** Reads the instance, parses what is there, and plans the merge. Read-only. */
@@ -69,7 +71,7 @@ export async function planAgainstTarget(
   }
 
   const { owned, ids } = ownership(project, target);
-  const plan = planDeployment({
+  const plan = planMerge({
     target: target.name,
     rev: state.rev,
     current,
@@ -78,6 +80,7 @@ export async function planAgainstTarget(
     owned,
     ownedEntities: ids,
     prune: options.prune,
+    ...(options.reassign === true ? { reassign: true } : {}),
     diffGeometry: options.diffGeometry,
     problems: prepared.report.problems,
   });
@@ -143,11 +146,13 @@ export async function checkPaletteDrift(
 }
 
 /** One line per operation, plus the summary line; empty when there is nothing to do. */
-export function describePlan(plan: Plan): readonly string[] {
+export function describePlan(plan: DeploymentPlan): readonly string[] {
   const lines: string[] = [];
+  for (const note of plan.notes) lines.push(`  note   ${note.message}`);
   for (const operation of plan.operations) {
-    if (operation.kind === 'leave-alien') {
-      lines.push(`  leave  ${operation.id} (${operation.label}) — not ours, copied through untouched`);
+    if (operation.kind === 'leave-alien' || operation.kind === 'keep-config') {
+      const verb = operation.kind === 'leave-alien' ? 'leave' : 'keep';
+      lines.push(`  ${verb.padEnd(6)} ${operation.id} (${operation.label}) — ${operation.reason ?? ''}`);
       continue;
     }
     const detail =
@@ -172,15 +177,15 @@ export function describePlan(plan: Plan): readonly string[] {
   return lines;
 }
 
-export function planIsEmpty(plan: Plan): boolean {
+export function planIsEmpty(plan: DeploymentPlan): boolean {
   return isNoop(plan);
 }
 
 /** One line for what a finished deploy actually did — the plan, minus the containers it left alone. */
-export function appliedSummary(plan: Plan): string {
+export function appliedSummary(plan: DeploymentPlan): string {
   if (isNoop(plan)) return 'deployed: the instance already matched the sources';
   const counts = Object.entries(summarizePlan(plan))
-    .filter(([kind, count]) => count > 0 && kind !== 'leave-alien')
+    .filter(([kind, count]) => count > 0 && kind !== 'leave-alien' && kind !== 'keep-config')
     .map(([kind, count]) => `${kind} ${count}`);
   return counts.length === 0 ? 'deployed: nothing needed changing' : `deployed: ${counts.join(', ')}`;
 }

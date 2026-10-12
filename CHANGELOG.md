@@ -38,6 +38,29 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
 
 ### Changed
 
+* **The plan is now a product of the merge.** `planDeployment` and `mergeFlowSets` were two
+  implementations of one decision, and they disagreed: the plan diffed `desired` while the payload
+  was merged from `current`, so it described writes that were not going to happen and stayed silent
+  about ones that were. One `planMerge` returns the `payload` *and* the operations, derived by
+  diffing the payload against the instance — "every operation is a real difference, and every
+  difference is reported" is asserted over a matrix of twelve situations in `io-plan.test.ts`.
+  Container operations no longer carry a `'(entity)'` placeholder or the never-produced
+  `update-entities`: they name the properties that changed. An update that changes nothing is no
+  longer emitted at all.
+* **Owning a config node is now a decision with a reason (D20).** Config nodes are collected from
+  every scope — top level, tab-scoped, subflow-scoped — and one rule applies: ours and declared is
+  written; ours and undeclared is kept unless `--prune` is given *and* nothing outside our
+  containers references it, in which case it is deleted, and either way the plan says which
+  (`keep-config` with `still referenced by a1 (props.broker)`, or `delete-config`). A config
+  scoped to one of our tabs survives that tab being rewritten instead of dying with it (P1-5).
+  Containerless nodes follow the same rule, and a config node we do not declare is copied through
+  rather than dropped.
+* **An id that belongs to somebody else is refused (D21).** Declaring a container with an id that
+  already exists on the target and is not ours used to overwrite it silently; it is now
+  `plan/id-collision`, an error, with `--reassign` on `plan`/`apply` to deploy under a fresh id
+  (`orders` → `orders_2`) instead. The reassigned id is what the lockfile records, and the alien
+  container it collided with is left exactly where it was.
+
 * **One definition of "what points at what".** `src/model/references.ts` holds
   `referenceTargets`/`outgoingTargets`/`inboundReferences`, so the validator, the layout and (next)
   the diff cannot disagree about what an edge is. The layout only sees `link` edges when it is given
@@ -66,6 +89,9 @@ validate it without an instance, and deploy it with ownership, compare-and-swap 
   connectivity check and the layout. A reference to a config node counts as a connection too, so a
   dashboard widget hanging off a group is no longer reported as a leftover; the acceptance example
   now validates with zero diagnostics of any severity.
+* **Only the containers we write are recorded as ours.** Recording every container in the payload
+  claimed the ones that are merely copied through, so a later `apply --prune` would have deleted
+  somebody else's tab. The acceptance run caught it.
 * **`flowgen --version` works.** It exited `2`, "unknown command": there was no version option at
   all. The version is now read from the manifest next to the module (`src/cli/` and `dist/cli/` are
   both two levels below the package root), and `--version` is a global option, so

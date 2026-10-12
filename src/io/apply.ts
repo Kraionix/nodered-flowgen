@@ -17,7 +17,7 @@ import { hasErrors } from '../diagnostics/index.ts';
 import { parseFlowFile } from '../import/fromFlowJson.ts';
 
 import { AdminApiError, type AdminApiClient } from './adminApi.ts';
-import { mergeFlowSets, planDeployment, summarizePlan, type Plan } from './plan.ts';
+import { planMerge, summarizePlan, type DeploymentPlan } from './plan.ts';
 import { createReceipt, writeReceipt, type Receipt } from './receipt.ts';
 
 export type ApplyAbortReason = 'validation' | 'version-mismatch' | 'unauthorized' | 'unreachable' | 'no-op';
@@ -33,6 +33,8 @@ export interface ApplyOptions {
   /** Problems from the validation gate; errors abort the deploy. */
   readonly problems?: readonly Problem[];
   /** Bounded retries when the revision moved under us. */
+  /** Give a container a fresh id when its id already exists on the instance and is not ours. */
+  readonly reassign?: boolean;
   readonly maxRetries?: number;
   /** Write the reverse operation here so `rollback` can undo this deploy. */
   readonly receiptPath?: string;
@@ -44,7 +46,7 @@ export interface ApplyOptions {
 export interface ApplyResult {
   readonly applied: boolean;
   readonly reason?: ApplyAbortReason;
-  readonly plan: Plan;
+  readonly plan: DeploymentPlan;
   readonly rev: string;
   readonly receipt?: Receipt;
   /**
@@ -64,13 +66,14 @@ export async function applyDeployment(options: ApplyOptions): Promise<ApplyResul
     return {
       applied: false,
       reason: 'validation',
-      plan: planDeployment({
+      plan: planMerge({
         target: options.target,
         rev: '',
         current: { subflows: [], configs: [], flows: [], loose: [], modules: {} },
         desired: options.desired,
         palette: options.palette,
         owned: options.owned,
+        ownedEntities: options.ownedEntities ?? new Set(),
         problems,
       }),
       rev: '',
@@ -91,15 +94,18 @@ export async function applyDeployment(options: ApplyOptions): Promise<ApplyResul
     }
 
     const current = parseCurrent(state.flows, options.palette);
-    const plan = planDeployment({
+    // One call produces both the plan and the payload it describes: what is written is what was
+    // reported, by construction (see the header of `plan.ts`).
+    const plan = planMerge({
       target: options.target,
       rev: state.rev,
       current,
       desired: options.desired,
       palette: options.palette,
       owned: options.owned,
-      ...(options.ownedEntities === undefined ? {} : { ownedEntities: options.ownedEntities }),
+      ownedEntities: options.ownedEntities ?? new Set(),
       ...(options.prune === undefined ? {} : { prune: options.prune }),
+      ...(options.reassign === true ? { reassign: true } : {}),
       problems,
     });
 
@@ -107,12 +113,7 @@ export async function applyDeployment(options: ApplyOptions): Promise<ApplyResul
       return { applied: false, reason: 'no-op', plan, rev: state.rev, message: 'dry run: nothing was written' };
     }
 
-    const merged = mergeFlowSets(current, options.desired, {
-      owned: options.owned,
-      ownedEntities: options.ownedEntities ?? new Set(),
-      prune: options.prune === true,
-    });
-    const payload = JSON.parse(emitFlowSet(merged.flowSet, { palette: options.palette })) as unknown[];
+    const payload = JSON.parse(emitFlowSet(plan.payload, { palette: options.palette })) as unknown[];
 
     // The write and the receipt are separate failure domains: the first is the deploy, the second
     // is our own bookkeeping. Failing the deploy because a directory was missing would be a lie —
@@ -175,7 +176,7 @@ export async function rollbackDeployment(
   }
 }
 
-function abortFromError(cause: unknown, fallback: ApplyAbortReason, plan: Plan = emptyPlan()): ApplyResult {
+function abortFromError(cause: unknown, fallback: ApplyAbortReason, plan: DeploymentPlan = emptyPlan()): ApplyResult {
   if (cause instanceof AdminApiError) {
     const reason: ApplyAbortReason =
       cause.code === 'version-mismatch'
@@ -202,11 +203,11 @@ function abortFromError(cause: unknown, fallback: ApplyAbortReason, plan: Plan =
   };
 }
 
-function emptyPlan(): Plan {
-  return { target: '', rev: '', operations: [], unowned: [], deletions: [], problems: [] };
+function emptyPlan(): DeploymentPlan {
+  return { target: '', rev: '', payload: { subflows: [], configs: [], flows: [], loose: [], modules: {} }, operations: [], unowned: [], deletions: [], notes: [], problems: [] };
 }
 
-function describePlan(plan: Plan): readonly string[] {
+function describePlan(plan: DeploymentPlan): readonly string[] {
   const summary = summarizePlan(plan);
   return Object.entries(summary)
     .filter(([, count]) => count > 0)

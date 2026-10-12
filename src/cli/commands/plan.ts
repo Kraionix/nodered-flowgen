@@ -25,6 +25,7 @@ export const PLAN_OPTIONS: readonly OptionSpec[] = [
   ...TARGET_OPTIONS,
   { name: 'prune', kind: 'boolean', description: 'plan the removal of our containers that the sources no longer define' },
   { name: 'no-prune', kind: 'boolean', description: 'never plan deletions, whatever the config says' },
+  { name: 'reassign', kind: 'boolean', description: 'plan a fresh id for a container whose id already exists on the target' },
   { name: 'diff-geometry', kind: 'boolean', description: 'include x/y/w/h in the diff (off by default: the editor recomputes them)' },
   { name: 'no-palette-check', kind: 'boolean', description: 'skip the live-palette drift warning' },
 ];
@@ -67,6 +68,7 @@ export async function planCommand(context: CliContext, args: ParsedArgs): Promis
   const live = await planAgainstTarget(context, project, target, prepared, {
     prune,
     diffGeometry: flag(args, 'diff-geometry'),
+    reassign: flag(args, 'reassign'),
   });
 
   const drift = flag(args, 'no-palette-check')

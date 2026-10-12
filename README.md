@@ -111,10 +111,18 @@ package version; `--version` after a command does the same without running the c
 
 `--json` prints `{command, exitCode, outcome, diagnostics[], …}` on **stdout even when the command
 fails**, so a pipeline can parse the outcome without caring about the exit code. `Problem.code` is
-stable and namespaced (`palette/*`, `graph/*`, `layout/*`, `normalize/*`, `overlay/*`, `plan/*`,
-`deploy/*`) — allowlist by code, never by message.
+stable and namespaced (`palette/*`, `graph/*`, `layout/*`, `normalize/*`, `overlay/*`, `plan/*`
+— including `plan/id-collision` — and `deploy/*`) — allowlist by code, never by message.
 
 ## Ownership, pruning and safety
+
+A `POST /flows` replaces the whole flow set, so ownership is enforced here: a container the
+lockfile does not list is copied through byte for byte and the plan prints `leave` for it. A config
+node or a containerless node we created is kept when it stops being declared — deleting it takes
+`--prune` *and* nothing outside our containers referencing it, and the plan says which
+(`keep-config … still referenced by a1 (props.broker)`). Declaring a container whose id already
+exists on the target and is not ours is refused (`plan/id-collision`); `--reassign` deploys it
+under a fresh id instead, leaving theirs untouched.
 
 The server cannot help with ownership: `POST /flows` replaces the entire flow set regardless of the
 deployment type (verified against 5.0.7 and 5.0.8). So:

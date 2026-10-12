@@ -15,6 +15,7 @@
 import path from 'node:path';
 
 import { applyDeployment } from '../../io/apply.ts';
+import { writtenContainers } from '../../io/plan.ts';
 import { updateLockfile } from '../../io/lockfile.ts';
 import type { Problem } from '../../diagnostics/index.ts';
 
@@ -23,7 +24,7 @@ import { appliedSummary, checkPaletteDrift, describePlan, TARGET_OPTIONS } from 
 import { CliFailure, EXIT, exitCodeForApplyReason, UsageError } from '../exit.ts';
 import { lines, type CommandResult } from '../output.ts';
 import { loadProject, pruneRequested, writeLockfile } from '../project.ts';
-import { adminClientFor, containersOf, ownership, prepare, resolveTarget } from '../pipeline.ts';
+import { adminClientFor, ownership, prepare, resolveTarget } from '../pipeline.ts';
 import { paletteData } from './plan.ts';
 import type { CliContext } from '../context.ts';
 import type { ParsedArgs } from '../args.ts';
@@ -34,6 +35,7 @@ export const APPLY_OPTIONS: readonly OptionSpec[] = [
   { name: 'prune', kind: 'boolean', description: 'remove our containers that the sources no longer define' },
   { name: 'no-prune', kind: 'boolean', description: 'never delete anything, whatever the config says' },
   { name: 'dry-run', kind: 'boolean', description: 'print the plan and exit without writing' },
+  { name: 'reassign', kind: 'boolean', description: 'give a container a fresh id when its id already exists and is not ours' },
   { name: 'expect-rev', kind: 'string', placeholder: '<rev>', description: 'refuse to deploy unless the instance is at this revision' },
   { name: 'receipt', kind: 'string', placeholder: '<file>', description: 'where to write the reverse operation' },
   { name: 'no-receipt', kind: 'boolean', description: 'do not write a receipt (rollback will not be possible)' },
@@ -124,6 +126,7 @@ export async function applyCommand(context: CliContext, args: ParsedArgs): Promi
     owned,
     ownedEntities: ids,
     prune,
+    ...(flag(args, 'reassign') ? { reassign: true } : {}),
     problems: prepared.report.problems,
     ...(receiptPath === undefined ? {} : { receiptPath }),
     ...(dryRun ? { dryRun: true } : {}),
@@ -156,7 +159,10 @@ export async function applyCommand(context: CliContext, args: ParsedArgs): Promi
       paletteProfile: target.profile,
       paletteHash: prepared.palette.snapshot.contentHash,
       keys: prepared.built.keys,
-      containers: containersOf(prepared.built.flowSet),
+      // The *payload*, not the sources — a container deployed under a reassigned id has to be
+      // recorded under the id that actually exists now — but never the containers we only copied
+      // through, or the next `--prune` would delete somebody else's tab.
+      containers: writtenContainers(result.plan),
     });
     await writeLockfile(project.lockfilePath, updated);
     lockfileWritten = path.relative(project.root, project.lockfilePath) || project.lockfilePath;

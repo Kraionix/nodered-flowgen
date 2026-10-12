@@ -22,7 +22,7 @@ import { P } from '../../src/authoring/params.ts';
 import { emitFlowSet } from '../../src/emit/flowJson.ts';
 import { applyDeployment, rollbackDeployment } from '../../src/io/apply.ts';
 import { AdminApiClient, AdminApiError } from '../../src/io/adminApi.ts';
-import { isNoop, planDeployment } from '../../src/io/plan.ts';
+import { isNoop, planMerge } from '../../src/io/plan.ts';
 import type { FlowSet } from '../../src/model/entities.ts';
 import type { PaletteType } from '../../src/palette/model.ts';
 import { filesystemSource } from '../../src/palette/sources/filesystem.ts';
@@ -191,13 +191,14 @@ test('apply creates the containers, keeps a foreign tab, and the flow answers at
   await client.writeFlows(foreign, state.rev);
 
   const current = await client.readFlows();
-  const plan = planDeployment({
+  const plan = planMerge({
     target: 'local',
     rev: current.rev,
     current: parseFlowFile(current.flows, { palette }),
     desired: flowSet,
     palette,
     owned: new Set(),
+    ownedEntities: new Set(),
   });
 
   const result = await applyDeployment({
@@ -231,13 +232,14 @@ test('a second apply is a no-op', async () => {
   const flowSet = buildFlowSet();
   const state = await client.readFlows();
   const current = parseFlowFile(state.flows, { palette });
-  const plan = planDeployment({
+  const plan = planMerge({
     target: 'local',
     rev: state.rev,
     current,
     desired: flowSet,
     palette,
     owned: new Set(['orders', 'scale']),
+    ownedEntities: new Set(),
   });
 
   const changing = plan.operations.filter(
