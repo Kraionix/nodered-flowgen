@@ -1,0 +1,48 @@
+{
+  "name": "@kraionix/nodered-flowgen",
+  "version": "0.1.0",
+  "description": "Declarative, type-checked Node-RED flow generation: palette-derived TypeScript types, a canonical emitter, and rev-checked plan/apply.",
+  "keywords": [
+    "node-red",
+    "flow",
+    "codegen",
+    "declarative",
+    "infrastructure-as-code",
+    "typescript"
+  ],
+  "license": "MIT",
+  "author": "Kraionix",
+  "type": "module",
+  "engines": {
+    "node": ">=22.9"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./toolkit": "./src/toolkit/index.ts",
+    "./testing": "./test/integration/harness.ts",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "flowgen": "./src/cli/index.ts"
+  },
+  "files": [
+    "src",
+    "palettes",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test",
+    "test:unit": "node --test test/unit",
+    "test:integration": "node --test test/integration"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "node-red": "^5.0.8",
+    "node-red-dashboard": "^3.6.6",
+    "nrlint": "^1.2.0",
+    "typescript": "^7.0.2"
+  }
+}
