@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# Scratch space: generated sources written by the printer round-trip test.
+.tmp/
 .flowgen-cache/
 *.receipt.json
 coverage/
