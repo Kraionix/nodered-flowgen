@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { defineFlowSet } from '../../src/authoring/defineFlowSet.ts';
+import { defineSubflowLibrary, subflows } from '../../src/authoring/library.ts';
 import { dashboard } from '../../src/authoring/helpers/dashboard.ts';
 import { layoutFlowSet } from '../../src/authoring/layout.ts';
 import { P } from '../../src/authoring/params.ts';
@@ -564,4 +565,116 @@ test('undeclared properties have a home, so a closed property bag is still lossl
     env: [{ name: 'hint', type: 'str', value: 'node-red-dashboard' }],
   });
   assert.deepEqual(flowSet.modules, { 'node-red-dashboard': '3.6.6' }, 'a declared list replaces the derivation');
+});
+
+test('a library defines subflows once and declares them into any build', () => {
+  // The library holds no builder, which is the whole point: the same file can be declared into a
+  // config here, a second one there, and a test somewhere else.
+  const library = defineSubflowLibrary('math', [
+    {
+      key: 'scale',
+      options: { name: 'scale × factor', params: { factor: P.num(2) }, ports: { in: ['value'], out: ['scaled'] } },
+      body: (s) => {
+        const work = s.node('function', { key: 'work', func: 'return msg;' });
+        s.in(work);
+        s.out(work, 0);
+      },
+    },
+    {
+      key: 'double',
+      options: { name: 'double', ports: { in: ['value'], out: ['doubled'] } },
+      body: (s) => {
+        const work = s.node('function', { key: 'twice', func: 'msg.payload *= 2; return msg;' });
+        s.in(work);
+        s.out(work, 0);
+      },
+    },
+  ]);
+
+  const flowSet = build(
+    defineFlowSet((f) => {
+      const handles = f.subflowFrom(library);
+      const tab = f.flow('main');
+      tab.instance(handles.get('scale') as never, { key: 'first', env: { factor: 3 } });
+      tab.instance(handles.get('double') as never, { key: 'second' });
+    }),
+  );
+
+  assert.deepEqual(flowSet.subflows.map((subflow) => subflow.id), ['scale', 'double']);
+  assert.deepEqual(flowSet.subflows[0]?.ports.in[0], [{ node: 'work' }]);
+  assert.deepEqual(
+    flowSet.flows[0]?.nodes.map((node) => node.type),
+    ['subflow:scale', 'subflow:double'],
+  );
+  assert.deepEqual(flowSet.flows[0]?.nodes[0]?.env, [{ name: 'factor', type: 'num', value: '3' }]);
+});
+
+test('f.use(subflows(library)) is the same declaration, spelled as a helper', () => {
+  const library = defineSubflowLibrary('one', [
+    { key: 'echo', options: { name: 'echo', ports: { in: ['value'], out: ['same'] } }, body: (s) => s.in(s.node('function', { key: 'pass', func: 'return msg;' }), 0) },
+  ]);
+
+  const flowSet = build(
+    defineFlowSet((f) => {
+      const handles = f.use(subflows(library));
+      const tab = f.flow('main');
+      tab.instance(handles.get('echo') as never, { key: 'use' });
+    }),
+  );
+  assert.deepEqual(flowSet.subflows.map((subflow) => subflow.id), ['echo']);
+  assert.equal(flowSet.flows[0]?.nodes[0]?.type, 'subflow:echo');
+});
+
+test('the shapes the v1 review listed as untested', () => {
+  const flowSet = build(
+    defineFlowSet((f) => {
+      // A subflow inside a subflow body, with an instance of the outer one in a tab.
+      const inner = f.subflow('inner', { name: 'inner', ports: { in: ['value'], out: ['same'] } }, (s) => {
+        const pass = s.node('function', { key: 'pass', func: 'return msg;' });
+        s.in(pass);
+        s.out(pass, 0);
+      });
+      f.subflow('outer', { name: 'outer', ports: { in: ['value'], out: ['same'] } }, (s) => {
+        const use = s.instance(inner, { key: 'inner_use' });
+        s.in(use);
+        s.out(use, 0);
+      });
+
+      const tab = f.flow('main');
+      // Two instances of one definition, in one tab, with different overrides.
+      const outer = f.subflow('factor', { name: 'factor', params: { factor: P.num(2) }, ports: { in: ['value'], out: ['scaled'] } }, (s) => {
+        const work = s.node('function', { key: 'work', func: 'return msg;' });
+        s.in(work);
+        s.out(work, 0);
+      });
+      const three = tab.instance(outer, { key: 'three', env: { factor: 3 } });
+      const five = tab.instance(outer, { key: 'five', env: { factor: 5 } });
+      assert.notEqual(three.id, five.id);
+
+      // A hand-authored junction and a link call, both of which are ordinary nodes to the IR.
+      const junction = tab.node('junction', { key: 'join' });
+      const call = tab.node('link call', { key: 'call', name: 'far away', linkType: 'static', links: ['receive_1'] });
+      const receive = tab.untyped('link in', { key: 'receive', name: 'receive_1', mode: 'link' });
+      tab.chain(receive, junction, call);
+    }),
+  );
+
+  assert.deepEqual(flowSet.subflows.map((subflow) => subflow.id), ['inner', 'outer', 'factor']);
+  const outer = flowSet.subflows[1];
+  assert.deepEqual(outer?.nodes.map((node) => node.type), ['subflow:inner']);
+  assert.deepEqual(outer?.ports.in[0], [{ node: 'inner_use' }]);
+
+  const tab = flowSet.flows[0];
+  assert.deepEqual(
+    tab?.nodes.map((node) => node.id),
+    ['three', 'five', 'join', 'call', 'receive'],
+  );
+  assert.deepEqual(tab?.nodes[0]?.env, [{ name: 'factor', type: 'num', value: '3' }]);
+  assert.deepEqual(tab?.nodes[1]?.env, [{ name: 'factor', type: 'num', value: '5' }]);
+  assert.equal(tab?.nodes[2]?.type, 'junction');
+  assert.deepEqual(
+    tab?.nodes.find((node) => node.id === 'call')?.props.extras['links'] ?? tab?.nodes.find((node) => node.id === 'call')?.props.known['links'],
+    ['receive_1'],
+    'a raw id in a reference property stays a raw id',
+  );
 });

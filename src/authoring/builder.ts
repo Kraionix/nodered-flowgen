@@ -31,9 +31,11 @@ import type {
   SubflowDef,
 } from '../model/entities.ts';
 import type { KnownType, NodeRef, PropsFor, Ref } from '../typing.ts';
-import { createIdAllocator, type IdAllocator } from '../model/ids.ts';
 
 import { toEnvOverrides, toEnvParams, type ParamDeclarations } from './params.ts';
+import { IdRegistry } from './registry.ts';
+import { NodeTable } from './table.ts';
+import type { SubflowLibrary } from './library.ts';
 
 /** Node-RED accepts a raw id wherever a reference is expected; the builder does too. */
 function refId(ref: Ref): EntityId {
@@ -203,6 +205,14 @@ export interface FlowBuilder extends ContainerHandle<'unplaced'> {
   subflow(key: string, options: SubflowOptions, body: (s: SubflowHandle) => void): SubflowHandle;
   /** Declares the `global-config` entry — its `env` hints and its module list. */
   manifest(options?: ManifestOptions): void;
+  /**
+   * Declares every definition of a library, and returns their handles by library key.
+   *
+   * This is how a subflow family lives in its own file or package: the library holds no builder,
+   * so the same definitions can be declared into any build, and each declaration gets its ids,
+   * lockfile keys and palette entry from the ordinary `subflow()` path.
+   */
+  subflowFrom(library: SubflowLibrary): ReadonlyMap<string, SubflowHandle>;
   /** Registers a helper module: `const dash = f.use(dashboard())`. */
   use<H>(helper: (builder: FlowBuilder) => H): H;
 }
@@ -239,15 +249,13 @@ interface PortLinks {
 export class Builder implements FlowBuilder {
   /** The caller's palette, extended with this flow set's own subflow instance types. */
   readonly #palette: Record<string, PaletteType>;
-  readonly #allocator: IdAllocator;
-  readonly #keys = new Map<string, string>();
-  readonly #nodes: Node[] = [];
+  readonly #ids: IdRegistry;
+  readonly #nodes = new NodeTable();
   readonly #configs: ConfigNode[] = [];
   readonly #flows: Flow[] = [];
   readonly #groups: Group[] = [];
   readonly #subflows: { definition: SubflowDef; ports: PortLinks }[] = [];
   readonly #params = new Map<EntityId, readonly EnvParam[]>();
-  readonly #duplicateKeys: string[] = [];
   #manifest: ManifestOptions | undefined;
 
   readonly id = 'unplaced';
@@ -255,23 +263,23 @@ export class Builder implements FlowBuilder {
 
   constructor(options: BuilderOptions) {
     this.#palette = { ...options.palette };
-    this.#allocator = createIdAllocator({ ...(options.lockfile === undefined ? {} : { locked: options.lockfile }) });
+    this.#ids = new IdRegistry({ lockfile: options.lockfile });
   }
 
   /** Authoring key → id, for the lockfile. */
   get keys(): ReadonlyMap<string, string> {
-    return this.#keys;
+    return this.#ids.keys;
   }
 
   /** Authoring keys that were used more than once; each reuse got its own id. */
   get duplicateKeys(): readonly string[] {
-    return this.#duplicateKeys;
+    return this.#ids.duplicateKeys;
   }
 
   toFlowSet(): FlowSet {
     const modules: Record<string, string> = {};
     if (this.#manifest === undefined) {
-      for (const type of [...this.#nodes, ...this.#configs].map((entity) => this.#palette[entity.type])) {
+      for (const type of [...this.#nodes.all(), ...this.#configs].map((entity) => this.#palette[entity.type])) {
         // `node-red` is the runtime itself and `flowgen:inline` is this file's own subflows:
         // neither is something the palette manager could install, so neither is a dependency.
         if (type === undefined || type.module === 'node-red' || type.module === INLINE_MODULE) continue;
@@ -288,7 +296,7 @@ export class Builder implements FlowBuilder {
     for (const { definition } of this.#subflows) known.add(definition.id);
     for (const group of this.#groups) known.add(group.id);
     for (const config of this.#configs) known.add(config.id);
-    for (const node of this.#nodes) known.add(node.id);
+    for (const node of this.#nodes.all()) known.add(node.id);
 
     const resolveProps = (props: NodeProps): NodeProps => ({
       known: this.#resolveProps(props.known, known),
@@ -296,8 +304,7 @@ export class Builder implements FlowBuilder {
     });
     const resolveNode = (node: Node): Node => ({ ...node, props: resolveProps(node.props) });
 
-    const nodesOf = (z: string): Node[] =>
-      this.#nodes.filter((node) => (node.z ?? '') === z).map(resolveNode);
+    const nodesOf = (z: string): Node[] => this.#nodes.containedIn(z).map(resolveNode);
     const configsOf = (z: string): ConfigNode[] =>
       this.#configs
         .filter((config) => (config.z ?? '') === z)
@@ -337,6 +344,15 @@ export class Builder implements FlowBuilder {
     // Last declaration wins: the entry is one entity, and `#allocate` would hand a second call a
     // disambiguated key, which would emit two entries instead of replacing one.
     this.#manifest = options;
+  }
+
+  subflowFrom(library: SubflowLibrary): ReadonlyMap<string, SubflowHandle> {
+    const handles = new Map<string, SubflowHandle>();
+    for (const definition of library.definitions) {
+      const handle = this.subflow(definition.key, definition.options, definition.body);
+      handles.set(definition.key, handle);
+    }
+    return handles;
   }
 
   #resolveProps(
@@ -667,27 +683,11 @@ export class Builder implements FlowBuilder {
   }
 
   #wire(fromId: EntityId, port: number, toId: EntityId): void {
-    const index = this.#nodes.findIndex((candidate) => candidate.id === fromId);
-    if (index < 0) {
-      throw new Error(`cannot wire from "${fromId}": it is not a node in this flow set (config nodes have no outputs)`);
-    }
-    const node = this.#nodes[index] as Node;
-    const wires: string[][] = node.wires.map((wire) => [...wire]);
-    while (wires.length <= port) wires.push([]);
-    (wires[port] as string[]).push(toId);
-    this.#nodes[index] = { ...node, wires };
+    this.#nodes.wire(fromId, port, toId);
   }
 
   #relocate(id: EntityId, z: string, g: string | undefined): void {
-    const index = this.#nodes.findIndex((candidate) => candidate.id === id);
-    if (index < 0) throw new Error(`cannot place unknown node "${id}"`);
-    const node = this.#nodes[index] as Node;
-    const { z: _previousZ, g: _previousG, ...rest } = node;
-    this.#nodes[index] = {
-      ...rest,
-      ...(z === '' ? {} : { z }),
-      ...(g === undefined ? {} : { g }),
-    };
+    this.#nodes.relocate(id, z, g);
   }
 
   /**
@@ -730,26 +730,9 @@ export class Builder implements FlowBuilder {
     return { known, extras };
   }
 
-  /**
-   * Allocates the id for an entity. A repeated authoring key is disambiguated and reported:
-   * silently returning the same id would merge two entities, and silently renaming it would
-   * make the lockfile unstable.
-   */
+  /** Allocates the id for an entity, reporting a repeated key rather than merging two entities. */
   #allocate(lockKey: string, localKey: string): EntityId {
-    if (!this.#keys.has(lockKey)) {
-      const id = this.#allocator.allocate(lockKey, { slug: localKey });
-      this.#keys.set(lockKey, id);
-      return id;
-    }
-
-    this.#duplicateKeys.push(lockKey);
-    for (let ordinal = 2; ; ordinal += 1) {
-      const candidate = `${lockKey}#${ordinal}`;
-      if (this.#keys.has(candidate)) continue;
-      const id = this.#allocator.allocate(candidate, { slug: `${localKey}_${ordinal}` });
-      this.#keys.set(candidate, id);
-      return id;
-    }
+    return this.#ids.allocateOrDuplicate(lockKey, localKey);
   }
 }
 

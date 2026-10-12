@@ -161,6 +161,7 @@ export {
 export {
   Builder,
   type BuilderOptions,
+  type ConfigScopeOptions,
   type ContainerHandle,
   type FlowBuilder,
   type FlowHandle,
@@ -169,9 +170,17 @@ export {
   type GroupOptions,
   type InstanceOptions,
   type NodeHandle,
+  type ManifestOptions,
   type SubflowHandle,
   type SubflowOptions,
 } from './authoring/builder.ts';
+
+export {
+  defineSubflowLibrary,
+  subflows,
+  type SubflowDefinition,
+  type SubflowLibrary,
+} from './authoring/library.ts';
 
 export {
   defineFlowSet,
